@@ -78,6 +78,48 @@ func TestRunCreatesTaskResultFromPrivateWorkspace(t *testing.T) {
 	}
 }
 
+func TestRunRejectsWorkspaceSourceWithUncommittedChanges(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf should-not-run > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded with uncommitted Workspace Source changes:\n%s", output)
+	}
+	if !strings.Contains(string(output), "Workspace Source has uncommitted changes; commit them before running isobox") {
+		t.Fatalf("error does not explain committed content requirement:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "uncommitted\n" {
+		t.Fatalf("Workspace Source was modified: %q", readme)
+	}
+
+	entries, err := os.ReadDir(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("Task Records created for rejected Workspace Source: %d", len(entries))
+	}
+}
+
 func TestPromoteAppliesReviewedTaskResultToWorkspaceSource(t *testing.T) {
 	source := initGitRepo(t)
 	records := t.TempDir()

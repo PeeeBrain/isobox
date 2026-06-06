@@ -59,8 +59,9 @@ of the private Workspace.
 If `--records` is omitted, Task Records are stored under
 `.isobox/tasks` relative to the current directory.
 
-Only committed source content is cloned into the Workspace. Uncommitted source
-changes are not included in this POC.
+The Workspace Source must be clean. `isobox run` rejects staged, unstaged, or
+untracked changes so that only explicitly committed content enters the
+Workspace. Dirty Source Snapshots are not supported in this POC.
 
 ## Review A Task Result
 
@@ -111,7 +112,7 @@ repositories.
 ## Current Limitations
 
 - No Runtime Backend or security isolation
-- No dirty-source rejection or Dirty Source Snapshot support
+- No Dirty Source Snapshot support
 - No interactive review prompt
 - No Task Record schema version
 - No explicit Reuse Input support

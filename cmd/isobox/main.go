@@ -112,6 +112,14 @@ func parseRun(args []string) (runOptions, error) {
 }
 
 func runTask(opts runOptions) error {
+	status, err := command(opts.source, "git", "status", "--porcelain").Output()
+	if err != nil {
+		return fmt.Errorf("inspect Workspace Source: %w", err)
+	}
+	if len(status) != 0 {
+		return errors.New("Workspace Source has uncommitted changes; commit them before running isobox")
+	}
+
 	id, err := newID()
 	if err != nil {
 		return err
