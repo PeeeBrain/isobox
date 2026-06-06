@@ -32,7 +32,14 @@ go build -o bin/isobox ./cmd/isobox
 
 ## Run A Workload
 
-The source must be a local Git repository:
+The source must be a local Git repository. The safest form to paste is a
+single-line command:
+
+```sh
+./bin/isobox run --source /path/to/repository --records /tmp/isobox-records -- sh -c 'printf "changed\n" > README.md'
+```
+
+The equivalent multiline form is:
 
 ```sh
 ./bin/isobox run \
@@ -41,6 +48,10 @@ The source must be a local Git repository:
   -- \
   sh -c 'printf "changed\n" > README.md'
 ```
+
+Do not insert blank lines after continuation backslashes. A backslash only
+continues onto the immediately following line. If the continuation is broken,
+the shell may execute the Workload Command directly in the current directory.
 
 Everything after `--` is the Workload Command. The command runs from the root
 of the private Workspace.
