@@ -14,15 +14,36 @@ import (
 )
 
 type taskRecord struct {
-	ID              string          `json:"id"`
-	CreatedAt       string          `json:"created_at"`
-	EffectivePolicy effectivePolicy `json:"effective_policy"`
-	Result          taskResult      `json:"result"`
+	ID              string             `json:"id"`
+	CreatedAt       string             `json:"created_at"`
+	EffectivePolicy effectivePolicy    `json:"effective_policy"`
+	Result          taskResult         `json:"result"`
+	Outcome         taskAttemptOutcome `json:"outcome"`
 }
 
+type taskAttemptOutcome struct {
+	Type     outcomeType `json:"type"`
+	ExitCode int         `json:"exit_code,omitempty"`
+	Error    string      `json:"error,omitempty"`
+}
+
+type outcomeType string
+
+const (
+	outcomeSuccess              outcomeType = "success"
+	outcomePreparationFailure               = "preparation_failure"
+	outcomeLaunchFailure                    = "launch_failure"
+	outcomeWorkloadCommandExit              = "workload_command_exit"
+	outcomeResultCaptureFailure             = "result_capture_failure"
+)
+
 type effectivePolicy struct {
-	WorkspaceSource string   `json:"workspace_source"`
-	WorkloadCommand []string `json:"workload_command"`
+	SchemaVersion    string   `json:"schema_version"`
+	WorkspaceSource  string   `json:"workspace_source"`
+	WorkloadCommand  []string `json:"workload_command"`
+	RuntimeBackend   string   `json:"runtime_backend"`
+	RetentionDefault string   `json:"retention_default"`
+	Limitations      []string `json:"limitations"`
 }
 
 type taskResult struct {
@@ -112,56 +133,104 @@ func parseRun(args []string) (runOptions, error) {
 }
 
 func runTask(opts runOptions) error {
-	status, err := command(opts.source, "git", "status", "--porcelain").Output()
-	if err != nil {
-		return fmt.Errorf("inspect Workspace Source: %w", err)
-	}
-	if len(status) != 0 {
-		return errors.New("Workspace Source has uncommitted changes; commit them before running isobox")
-	}
-
 	id, err := newID()
 	if err != nil {
 		return err
-	}
-
-	workspaceRoot, err := os.MkdirTemp("", "isobox-workspace-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(workspaceRoot)
-
-	workspace := filepath.Join(workspaceRoot, "workspace")
-	if err := command("", "git", "clone", "--quiet", opts.source, workspace).Run(); err != nil {
-		return fmt.Errorf("create private workspace: %w", err)
-	}
-
-	stdout, stderr, exitStatus := runWorkload(workspace, opts.command)
-
-	var diff bytes.Buffer
-	diffCmd := command(workspace, "git", "diff", "--no-ext-diff")
-	diffCmd.Stdout = &diff
-	diffCmd.Stderr = os.Stderr
-	if err := diffCmd.Run(); err != nil {
-		return fmt.Errorf("capture task result diff: %w", err)
 	}
 
 	record := taskRecord{
 		ID:        id,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		EffectivePolicy: effectivePolicy{
-			WorkspaceSource: opts.source,
-			WorkloadCommand: opts.command,
-		},
-		Result: taskResult{
-			ExitStatus: exitStatus,
-			Stdout:     stdout,
-			Stderr:     stderr,
-			Diff:       diff.String(),
+			SchemaVersion:    "v1",
+			WorkspaceSource:  opts.source,
+			WorkloadCommand:  opts.command,
+			RuntimeBackend:   "host-process",
+			RetentionDefault: "disposable",
+			Limitations: []string{
+				"host-process: workload executes as a normal host process with the current user's privileges and filesystem access",
+			},
 		},
 	}
 
-	recordDir := filepath.Join(opts.records, id)
+	status, err := command(opts.source, "git", "status", "--porcelain").Output()
+	if err != nil {
+		record.Outcome = taskAttemptOutcome{Type: outcomePreparationFailure, Error: err.Error()}
+		if werr := writeRecord(opts.records, record); werr != nil {
+			return werr
+		}
+		return fmt.Errorf("inspect Workspace Source: %w", err)
+	}
+	if len(status) != 0 {
+		msg := "Workspace Source has uncommitted changes; commit them before running isobox"
+		record.Outcome = taskAttemptOutcome{Type: "preparation_failure", Error: msg}
+		if werr := writeRecord(opts.records, record); werr != nil {
+			return werr
+		}
+		return errors.New(msg)
+	}
+
+	workspaceRoot, err := os.MkdirTemp("", "isobox-workspace-*")
+	if err != nil {
+		record.Outcome = taskAttemptOutcome{Type: outcomePreparationFailure, Error: err.Error()}
+		if werr := writeRecord(opts.records, record); werr != nil {
+			return werr
+		}
+		return err
+	}
+	defer os.RemoveAll(workspaceRoot)
+
+	workspace := filepath.Join(workspaceRoot, "workspace")
+	if err := command("", "git", "clone", "--quiet", opts.source, workspace).Run(); err != nil {
+		record.Outcome = taskAttemptOutcome{Type: outcomePreparationFailure, Error: err.Error()}
+		if werr := writeRecord(opts.records, record); werr != nil {
+			return werr
+		}
+		return fmt.Errorf("create private workspace: %w", err)
+	}
+
+	stdout, stderr, exitStatus, launchErr := runWorkload(workspace, opts.command)
+	if launchErr != nil {
+		record.Result = taskResult{Stdout: stdout, Stderr: stderr}
+		record.Outcome = taskAttemptOutcome{Type: outcomeLaunchFailure, Error: launchErr.Error()}
+		if werr := writeRecord(opts.records, record); werr != nil {
+			return werr
+		}
+		return fmt.Errorf("launch workload command: %w", launchErr)
+	}
+	record.Result = taskResult{
+		ExitStatus: exitStatus,
+		Stdout:     stdout,
+		Stderr:     stderr,
+	}
+
+	var diff bytes.Buffer
+	diffCmd := command(workspace, "git", "diff", "--no-ext-diff")
+	diffCmd.Stdout = &diff
+	diffCmd.Stderr = os.Stderr
+	if err := diffCmd.Run(); err != nil {
+		record.Outcome = taskAttemptOutcome{Type: outcomeResultCaptureFailure, Error: err.Error()}
+		if werr := writeRecord(opts.records, record); werr != nil {
+			return werr
+		}
+		return fmt.Errorf("capture task result diff: %w", err)
+	}
+	record.Result.Diff = diff.String()
+
+	if exitStatus != 0 {
+		record.Outcome = taskAttemptOutcome{Type: outcomeWorkloadCommandExit, ExitCode: exitStatus}
+		if werr := writeRecord(opts.records, record); werr != nil {
+			return werr
+		}
+		return fmt.Errorf("workload command exited with status %d", exitStatus)
+	}
+
+	record.Outcome = taskAttemptOutcome{Type: outcomeSuccess}
+	return writeRecord(opts.records, record)
+}
+
+func writeRecord(recordsDir string, record taskRecord) error {
+	recordDir := filepath.Join(recordsDir, record.ID)
 	if err := os.MkdirAll(recordDir, 0o755); err != nil {
 		return err
 	}
@@ -169,14 +238,7 @@ func runTask(opts runOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(recordDir, "record.json"), append(recordBytes, '\n'), 0o644); err != nil {
-		return err
-	}
-
-	if exitStatus != 0 {
-		return fmt.Errorf("workload command exited with status %d", exitStatus)
-	}
-	return nil
+	return os.WriteFile(filepath.Join(recordDir, "record.json"), append(recordBytes, '\n'), 0o644)
 }
 
 func promote(args []string) error {
@@ -207,7 +269,7 @@ func promote(args []string) error {
 	return nil
 }
 
-func runWorkload(workspace string, workload []string) (string, string, int) {
+func runWorkload(workspace string, workload []string) (string, string, int, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := command(workspace, workload[0], workload[1:]...)
 	cmd.Stdout = &stdout
@@ -215,14 +277,14 @@ func runWorkload(workspace string, workload []string) (string, string, int) {
 
 	err := cmd.Run()
 	if err == nil {
-		return stdout.String(), stderr.String(), 0
+		return stdout.String(), stderr.String(), 0, nil
 	}
 
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return stdout.String(), stderr.String(), exitErr.ExitCode()
+		return stdout.String(), stderr.String(), exitErr.ExitCode(), nil
 	}
-	return stdout.String(), err.Error() + "\n" + stderr.String(), 127
+	return stdout.String(), stderr.String(), 0, err
 }
 
 func command(dir, name string, args ...string) *exec.Cmd {

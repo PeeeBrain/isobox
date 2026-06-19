@@ -12,6 +12,10 @@ _Avoid_: job, run
 One execution attempt for a Task, bound to a single Sandbox.
 _Avoid_: retry, run
 
+**Task Attempt Outcome**:
+The reason a Task Attempt ended, distinguishing preparation failure, launch failure, Workload Command exit, and interruption.
+_Avoid_: task status, exit status
+
 **Task Record**:
 The durable audit and result history for a Task.
 _Avoid_: task folder, task storage
@@ -112,6 +116,7 @@ _Avoid_: merged config, final settings
 
 - A **Task** has one or more **Task Attempts**
 - A **Task** has exactly one **Task Record**
+- A **Task Attempt** has exactly one **Task Attempt Outcome** after it ends
 - A **Task Attempt** may produce exactly one **Task Result**
 - A **Task Attempt** has exactly one **Sandbox**
 - A **Sandbox** is created by exactly one **Runtime Backend**

@@ -53,6 +53,11 @@ func TestRunCreatesTaskResultFromPrivateWorkspace(t *testing.T) {
 			Stderr     string `json:"stderr"`
 			Diff       string `json:"diff"`
 		} `json:"result"`
+		Outcome struct {
+			Type     string `json:"type"`
+			ExitCode int    `json:"exit_code"`
+			Error    string `json:"error"`
+		} `json:"outcome"`
 	}
 	if err := json.Unmarshal(recordBytes, &record); err != nil {
 		t.Fatal(err)
@@ -75,6 +80,123 @@ func TestRunCreatesTaskResultFromPrivateWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(record.Result.Diff, "-original") || !strings.Contains(record.Result.Diff, "+changed") {
 		t.Fatalf("diff does not describe workspace change:\n%s", record.Result.Diff)
+	}
+	if record.Outcome.Type != "success" {
+		t.Fatalf("outcome = %q, want success", record.Outcome.Type)
+	}
+}
+
+func TestRunCapturesSchemaVersionedEffectivePolicy(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	recordBytes, err := os.ReadFile(filepath.Join(recordPath, "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var record struct {
+		EffectivePolicy struct {
+			SchemaVersion    string   `json:"schema_version"`
+			WorkspaceSource  string   `json:"workspace_source"`
+			WorkloadCommand  []string `json:"workload_command"`
+			RuntimeBackend   string   `json:"runtime_backend"`
+			RetentionDefault string   `json:"retention_default"`
+			Limitations      []string `json:"limitations"`
+		} `json:"effective_policy"`
+	}
+	if err := json.Unmarshal(recordBytes, &record); err != nil {
+		t.Fatal(err)
+	}
+
+	if record.EffectivePolicy.SchemaVersion != "v1" {
+		t.Fatalf("effective policy schema version = %q, want v1", record.EffectivePolicy.SchemaVersion)
+	}
+	if record.EffectivePolicy.WorkspaceSource != source {
+		t.Fatalf("workspace source = %q, want %q", record.EffectivePolicy.WorkspaceSource, source)
+	}
+	if strings.Join(record.EffectivePolicy.WorkloadCommand, " ") != "sh -c printf changed > README.md" {
+		t.Fatalf("workload command = %#v", record.EffectivePolicy.WorkloadCommand)
+	}
+	if record.EffectivePolicy.RuntimeBackend != "host-process" {
+		t.Fatalf("runtime backend = %q, want host-process", record.EffectivePolicy.RuntimeBackend)
+	}
+	if record.EffectivePolicy.RetentionDefault != "disposable" {
+		t.Fatalf("retention default = %q, want disposable", record.EffectivePolicy.RetentionDefault)
+	}
+	if len(record.EffectivePolicy.Limitations) == 0 {
+		t.Fatalf("limitations not recorded")
+	}
+	var foundHostProcessLimitation bool
+	for _, limitation := range record.EffectivePolicy.Limitations {
+		if strings.Contains(limitation, "host-process") {
+			foundHostProcessLimitation = true
+			break
+		}
+	}
+	if !foundHostProcessLimitation {
+		t.Fatalf("limitations do not document host-process lower assurance: %#v", record.EffectivePolicy.Limitations)
+	}
+}
+
+func TestRunRecordsEffectivePolicyWhenWorkloadCommandFails(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md; exit 7",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded for failing workload command:\n%s", output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.EffectivePolicy.SchemaVersion != "v1" {
+		t.Fatalf("effective policy schema version = %q, want v1", record.EffectivePolicy.SchemaVersion)
+	}
+	if record.EffectivePolicy.RuntimeBackend != "host-process" {
+		t.Fatalf("runtime backend = %q, want host-process", record.EffectivePolicy.RuntimeBackend)
+	}
+	if record.EffectivePolicy.RetentionDefault != "disposable" {
+		t.Fatalf("retention default = %q, want disposable", record.EffectivePolicy.RetentionDefault)
+	}
+	if len(record.EffectivePolicy.Limitations) == 0 {
+		t.Fatalf("limitations not recorded")
+	}
+	if record.Result.ExitStatus != 7 {
+		t.Fatalf("exit status = %d, want 7", record.Result.ExitStatus)
+	}
+	if record.Outcome.Type != "workload_command_exit" {
+		t.Fatalf("outcome = %q, want workload_command_exit", record.Outcome.Type)
+	}
+	if record.Outcome.ExitCode != 7 {
+		t.Fatalf("outcome exit code = %d, want 7", record.Outcome.ExitCode)
 	}
 }
 
@@ -111,12 +233,87 @@ func TestRunRejectsWorkspaceSourceWithUncommittedChanges(t *testing.T) {
 		t.Fatalf("Workspace Source was modified: %q", readme)
 	}
 
-	entries, err := os.ReadDir(records)
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+	if record.Outcome.Type != "preparation_failure" {
+		t.Fatalf("outcome = %q, want preparation_failure", record.Outcome.Type)
+	}
+	if record.Outcome.Error == "" {
+		t.Fatal("preparation failure record missing error")
+	}
+}
+
+func TestRunRecordsLaunchFailure(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"this-binary-does-not-exist",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded for missing workload command:\n%s", output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+	if record.Outcome.Type != "launch_failure" {
+		t.Fatalf("outcome = %q, want launch_failure", record.Outcome.Type)
+	}
+	if record.Outcome.Error == "" {
+		t.Fatal("launch failure record missing error")
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("Task Records created for rejected Workspace Source: %d", len(entries))
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified: %q", readme)
+	}
+}
+
+func TestRunRecordsResultCaptureFailure(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "rm -rf .git",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded when result capture failed:\n%s", output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+	if record.Outcome.Type != "result_capture_failure" {
+		t.Fatalf("outcome = %q, want result_capture_failure", record.Outcome.Type)
+	}
+	if record.Outcome.Error == "" {
+		t.Fatal("result-capture failure record missing error")
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified: %q", readme)
 	}
 }
 
@@ -179,6 +376,43 @@ func run(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("%s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}
+}
+
+func readRecord(t *testing.T, recordDir string) recordView {
+	t.Helper()
+
+	recordBytes, err := os.ReadFile(filepath.Join(recordDir, "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var record recordView
+	if err := json.Unmarshal(recordBytes, &record); err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+type recordView struct {
+	EffectivePolicy struct {
+		SchemaVersion    string   `json:"schema_version"`
+		WorkspaceSource  string   `json:"workspace_source"`
+		WorkloadCommand  []string `json:"workload_command"`
+		RuntimeBackend   string   `json:"runtime_backend"`
+		RetentionDefault string   `json:"retention_default"`
+		Limitations      []string `json:"limitations"`
+	} `json:"effective_policy"`
+	Result struct {
+		ExitStatus int    `json:"exit_status"`
+		Stdout     string `json:"stdout"`
+		Stderr     string `json:"stderr"`
+		Diff       string `json:"diff"`
+	} `json:"result"`
+	Outcome struct {
+		Type     string `json:"type"`
+		ExitCode int    `json:"exit_code"`
+		Error    string `json:"error"`
+	} `json:"outcome"`
 }
 
 func onlyTaskRecord(t *testing.T, records string) string {
