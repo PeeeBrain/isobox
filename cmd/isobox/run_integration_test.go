@@ -37,31 +37,7 @@ func TestRunCreatesTaskResultFromPrivateWorkspace(t *testing.T) {
 	}
 
 	recordPath := onlyTaskRecord(t, records)
-	recordBytes, err := os.ReadFile(filepath.Join(recordPath, "record.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var record struct {
-		EffectivePolicy struct {
-			WorkspaceSource string   `json:"workspace_source"`
-			WorkloadCommand []string `json:"workload_command"`
-		} `json:"effective_policy"`
-		Result struct {
-			ExitStatus int    `json:"exit_status"`
-			Stdout     string `json:"stdout"`
-			Stderr     string `json:"stderr"`
-			Diff       string `json:"diff"`
-		} `json:"result"`
-		Outcome struct {
-			Type     string `json:"type"`
-			ExitCode int    `json:"exit_code"`
-			Error    string `json:"error"`
-		} `json:"outcome"`
-	}
-	if err := json.Unmarshal(recordBytes, &record); err != nil {
-		t.Fatal(err)
-	}
+	record := readRecord(t, recordPath)
 
 	if record.EffectivePolicy.WorkspaceSource != source {
 		t.Fatalf("workspace source not captured in effective policy: %q", record.EffectivePolicy.WorkspaceSource)

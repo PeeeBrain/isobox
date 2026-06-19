@@ -13,7 +13,7 @@ One execution attempt for a Task, bound to a single Sandbox.
 _Avoid_: retry, run
 
 **Task Attempt Outcome**:
-The reason a Task Attempt ended, distinguishing preparation failure, launch failure, Workload Command exit, and interruption.
+The reason a Task Attempt ended. Implemented values are `success`, `preparation_failure`, `launch_failure`, `workload_command_exit`, and `result_capture_failure`. `interruption` is reserved for future use.
 _Avoid_: task status, exit status
 
 **Task Record**:

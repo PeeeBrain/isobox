@@ -47,7 +47,7 @@ type effectivePolicy struct {
 }
 
 type taskResult struct {
-	ExitStatus int    `json:"exit_status"`
+	ExitStatus int    `json:"exit_status,omitempty"`
 	Stdout     string `json:"stdout"`
 	Stderr     string `json:"stderr"`
 	Diff       string `json:"diff"`
@@ -163,7 +163,7 @@ func runTask(opts runOptions) error {
 	}
 	if len(status) != 0 {
 		msg := "Workspace Source has uncommitted changes; commit them before running isobox"
-		record.Outcome = taskAttemptOutcome{Type: "preparation_failure", Error: msg}
+		record.Outcome = taskAttemptOutcome{Type: outcomePreparationFailure, Error: msg}
 		if werr := writeRecord(opts.records, record); werr != nil {
 			return werr
 		}
