@@ -23,6 +23,13 @@ var ErrDirtyWorkspaceSource = errors.New("Workspace Source has uncommitted chang
 type RepositoryWorkspace struct {
 	root   string
 	source string
+	retain bool
+}
+
+// Path returns the private Workspace container path. The repository itself is
+// available below Root().
+func (w *RepositoryWorkspace) Path() string {
+	return w.root
 }
 
 // CreateRepository creates a new Repository Workspace from a clean Git Workspace
@@ -68,9 +75,19 @@ func (w *RepositoryWorkspace) Close() error {
 	if w.root == "" {
 		return nil
 	}
+	if w.retain {
+		return nil
+	}
 	err := os.RemoveAll(w.root)
 	w.root = ""
 	return err
+}
+
+// Retain prevents Close from removing the private Workspace and returns the
+// retained Workspace container path for review or debugging.
+func (w *RepositoryWorkspace) Retain() string {
+	w.retain = true
+	return w.root
 }
 
 func assertClean(source string) error {
