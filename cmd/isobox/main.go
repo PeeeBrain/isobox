@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"isobox/internal/runtimebackend"
 	"isobox/internal/workspace"
 )
 
@@ -141,6 +143,7 @@ func runTask(opts runOptions) error {
 		return err
 	}
 
+	backend := runtimebackend.NewHost()
 	record := taskRecord{
 		SchemaVersion: taskRecordSchemaVersion,
 		ID:            id,
@@ -149,11 +152,9 @@ func runTask(opts runOptions) error {
 			SchemaVersion:    "v1",
 			WorkspaceSource:  opts.source,
 			WorkloadCommand:  opts.command,
-			RuntimeBackend:   "host-process",
+			RuntimeBackend:   backend.Name(),
 			RetentionDefault: "disposable",
-			Limitations: []string{
-				"host-process: workload executes as a normal host process with the current user's privileges and filesystem access",
-			},
+			Limitations:      backend.Limitations(),
 		},
 	}
 
@@ -174,9 +175,12 @@ func runTask(opts runOptions) error {
 	}
 	defer ws.Close()
 
-	stdout, stderr, exitStatus, launchErr := runWorkload(ws.Root(), opts.command)
+	result, launchErr := backend.Run(context.Background(), runtimebackend.RunRequest{
+		Workdir: ws.Root(),
+		Command: opts.command,
+	})
 	if launchErr != nil {
-		record.Result = taskResult{Stdout: stdout, Stderr: stderr}
+		record.Result = taskResult{Stdout: result.Stdout, Stderr: result.Stderr}
 		record.Outcome = taskAttemptOutcome{Type: outcomeLaunchFailure, Error: launchErr.Error()}
 		if werr := writeRecord(opts.records, record); werr != nil {
 			return werr
@@ -184,9 +188,9 @@ func runTask(opts runOptions) error {
 		return fmt.Errorf("launch workload command: %w", launchErr)
 	}
 	record.Result = taskResult{
-		ExitStatus: exitStatus,
-		Stdout:     stdout,
-		Stderr:     stderr,
+		ExitStatus: result.ExitStatus,
+		Stdout:     result.Stdout,
+		Stderr:     result.Stderr,
 	}
 
 	diff, err := ws.Diff()
@@ -199,12 +203,12 @@ func runTask(opts runOptions) error {
 	}
 	record.Result.Diff = diff
 
-	if exitStatus != 0 {
-		record.Outcome = taskAttemptOutcome{Type: outcomeWorkloadCommandExit, ExitCode: exitStatus}
+	if result.ExitStatus != 0 {
+		record.Outcome = taskAttemptOutcome{Type: outcomeWorkloadCommandExit, ExitCode: result.ExitStatus}
 		if werr := writeRecord(opts.records, record); werr != nil {
 			return werr
 		}
-		return fmt.Errorf("workload command exited with status %d", exitStatus)
+		return fmt.Errorf("workload command exited with status %d", result.ExitStatus)
 	}
 
 	record.Outcome = taskAttemptOutcome{Type: outcomeSuccess}
@@ -244,24 +248,6 @@ func promote(args []string) error {
 		return fmt.Errorf("promote task result: %w", err)
 	}
 	return nil
-}
-
-func runWorkload(workspace string, workload []string) (string, string, int, error) {
-	var stdout, stderr bytes.Buffer
-	cmd := command(workspace, workload[0], workload[1:]...)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err == nil {
-		return stdout.String(), stderr.String(), 0, nil
-	}
-
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return stdout.String(), stderr.String(), exitErr.ExitCode(), nil
-	}
-	return stdout.String(), stderr.String(), 0, err
 }
 
 func command(dir, name string, args ...string) *exec.Cmd {

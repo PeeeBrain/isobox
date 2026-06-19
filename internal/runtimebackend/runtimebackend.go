@@ -1,0 +1,42 @@
+package runtimebackend
+
+import (
+	"context"
+	"io"
+)
+
+// Backend executes a Workload Command inside a Sandbox.
+//
+// A Backend is a Runtime Backend: the isolation provider that creates and
+// enforces the low-level boundary for a Sandbox. Implementations may range
+// from lower-assurance host processes to stronger isolation providers.
+type Backend interface {
+	// Name returns the identifier recorded in the Effective Policy.
+	Name() string
+
+	// Limitations returns human-readable statements about the assurance and
+	// enforcement limits of this backend. These are recorded in the Effective
+	// Policy so the Task Record never implies stronger isolation than the
+	// backend provides.
+	Limitations() []string
+
+	// Run executes the requested command and returns its captured output and
+	// exit status. A non-zero exit status is returned in the result without an
+	// error; an error is returned only when the command could not be launched
+	// or when execution could not be observed.
+	Run(ctx context.Context, req RunRequest) (RunResult, error)
+}
+
+// RunRequest configures a single Workload Command execution.
+type RunRequest struct {
+	Workdir string
+	Command []string
+	Stdin   io.Reader
+}
+
+// RunResult captures the observable output of a Workload Command execution.
+type RunResult struct {
+	ExitStatus int
+	Stdout     string
+	Stderr     string
+}
