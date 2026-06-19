@@ -328,6 +328,167 @@ func TestPromoteAppliesReviewedTaskResultToWorkspaceSource(t *testing.T) {
 	}
 }
 
+func TestRunWritesSchemaVersionedTaskRecord(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+	if record.SchemaVersion != "v1" {
+		t.Fatalf("task record schema_version = %q, want v1", record.SchemaVersion)
+	}
+	if record.EffectivePolicy.SchemaVersion != "v1" {
+		t.Fatalf("effective policy schema_version = %q, want v1", record.EffectivePolicy.SchemaVersion)
+	}
+}
+
+func TestPromoteRejectsMalformedTaskRecord(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	recordDir := filepath.Join(records, "task-malformed")
+	if err := os.MkdirAll(recordDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(recordDir, "record.json"), []byte("{not valid json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded for malformed record:\n%s", output)
+	}
+	if !strings.Contains(string(output), "parse task record") {
+		t.Fatalf("error does not indicate parse failure:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified by rejected promotion: %q", readme)
+	}
+}
+
+func TestPromoteRejectsTaskRecordMissingRequiredFields(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	recordDir := filepath.Join(records, "task-incomplete")
+	if err := os.MkdirAll(recordDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := map[string]any{
+		"schema_version": "v1",
+		"created_at":     "2026-06-20T00:00:00Z",
+		"effective_policy": map[string]any{
+			"schema_version":    "v1",
+			"workspace_source":  source,
+			"workload_command":  []string{"sh", "-c", "true"},
+			"runtime_backend":   "host-process",
+			"retention_default": "disposable",
+		},
+		"result":  map[string]any{"diff": "should-not-apply"},
+		"outcome": map[string]any{"type": "success"},
+	}
+	recordBytes, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(recordDir, "record.json"), append(recordBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded for record missing required fields:\n%s", output)
+	}
+	if !strings.Contains(string(output), "id") {
+		t.Fatalf("error does not mention the missing id field:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified by rejected promotion: %q", readme)
+	}
+}
+
+func TestPromoteRejectsUnsupportedTaskRecordSchemaVersion(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	recordDir := filepath.Join(records, "task-future")
+	if err := os.MkdirAll(recordDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := map[string]any{
+		"schema_version": "v999",
+		"id":             "task-future",
+		"created_at":     "2026-06-20T00:00:00Z",
+		"effective_policy": map[string]any{
+			"schema_version":    "v1",
+			"workspace_source":  source,
+			"workload_command":  []string{"sh", "-c", "true"},
+			"runtime_backend":   "host-process",
+			"retention_default": "disposable",
+		},
+		"result":  map[string]any{"diff": "should-not-apply"},
+		"outcome": map[string]any{"type": "success"},
+	}
+	recordBytes, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(recordDir, "record.json"), append(recordBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded for record with unsupported schema_version:\n%s", output)
+	}
+	out := string(output)
+	if !strings.Contains(out, "v999") {
+		t.Fatalf("error does not mention the unsupported schema_version:\n%s", output)
+	}
+	if !strings.Contains(out, "unsupported") {
+		t.Fatalf("error does not indicate the schema_version is unsupported:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified by rejected promotion: %q", readme)
+	}
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 
@@ -370,6 +531,7 @@ func readRecord(t *testing.T, recordDir string) recordView {
 }
 
 type recordView struct {
+	SchemaVersion   string `json:"schema_version"`
 	EffectivePolicy struct {
 		SchemaVersion    string   `json:"schema_version"`
 		WorkspaceSource  string   `json:"workspace_source"`

@@ -16,6 +16,7 @@ import (
 )
 
 type taskRecord struct {
+	SchemaVersion   string             `json:"schema_version"`
 	ID              string             `json:"id"`
 	CreatedAt       string             `json:"created_at"`
 	EffectivePolicy effectivePolicy    `json:"effective_policy"`
@@ -141,8 +142,9 @@ func runTask(opts runOptions) error {
 	}
 
 	record := taskRecord{
-		ID:        id,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		SchemaVersion: taskRecordSchemaVersion,
+		ID:            id,
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 		EffectivePolicy: effectivePolicy{
 			SchemaVersion:    "v1",
 			WorkspaceSource:  opts.source,
@@ -226,13 +228,8 @@ func promote(args []string) error {
 		return errors.New("usage: isobox promote <task-record-dir>")
 	}
 
-	recordBytes, err := os.ReadFile(filepath.Join(args[0], "record.json"))
+	record, err := loadRecord(args[0])
 	if err != nil {
-		return err
-	}
-
-	var record taskRecord
-	if err := json.Unmarshal(recordBytes, &record); err != nil {
 		return err
 	}
 	if record.Result.Diff == "" {

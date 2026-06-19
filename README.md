@@ -114,7 +114,6 @@ repositories.
 - No Runtime Backend or security isolation
 - No Dirty Source Snapshot support
 - No interactive review prompt
-- No Task Record schema version
 - No explicit Reuse Input support
 - No network, credential, resource, or process policy enforcement
 - Repository Workspaces only; Directory Workspaces are not implemented
