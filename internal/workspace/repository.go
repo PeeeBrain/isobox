@@ -26,12 +26,6 @@ type RepositoryWorkspace struct {
 	retain bool
 }
 
-// Path returns the private Workspace container path. The repository itself is
-// available below Root().
-func (w *RepositoryWorkspace) Path() string {
-	return w.root
-}
-
 // CreateRepository creates a new Repository Workspace from a clean Git Workspace
 // Source. It rejects Workspace Sources with uncommitted changes.
 func CreateRepository(source string) (*RepositoryWorkspace, error) {
@@ -84,10 +78,10 @@ func (w *RepositoryWorkspace) Close() error {
 }
 
 // Retain prevents Close from removing the private Workspace and returns the
-// retained Workspace container path for review or debugging.
+// retained Repository Workspace path for review or debugging.
 func (w *RepositoryWorkspace) Retain() string {
 	w.retain = true
-	return w.root
+	return w.Root()
 }
 
 func assertClean(source string) error {

@@ -153,6 +153,11 @@ func runTask(opts runOptions) error {
 	}
 
 	backend := runtimebackend.NewHost()
+	retention := "disposable"
+	if opts.retainWorkspace {
+		retention = "retained"
+	}
+
 	record := taskRecord{
 		SchemaVersion: taskRecordSchemaVersion,
 		ID:            id,
@@ -162,9 +167,10 @@ func runTask(opts runOptions) error {
 			WorkspaceSource:  opts.source,
 			WorkloadCommand:  opts.command,
 			RuntimeBackend:   backend.Name(),
-			RetentionDefault: "disposable",
+			RetentionDefault: retention,
 			Limitations:      backend.Limitations(),
 		},
+		Workspace: workspaceInfo{Retention: retention},
 	}
 
 	ws, err := workspace.CreateRepository(opts.source)
@@ -185,9 +191,7 @@ func runTask(opts runOptions) error {
 	defer ws.Close()
 
 	if opts.retainWorkspace {
-		record.Workspace = workspaceInfo{Retention: "retained", Path: ws.Retain()}
-	} else {
-		record.Workspace = workspaceInfo{Retention: "disposable"}
+		record.Workspace.Path = ws.Retain()
 	}
 	defer reportWorkspace(record.Workspace)
 

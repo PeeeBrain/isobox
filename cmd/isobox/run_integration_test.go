@@ -319,6 +319,9 @@ func TestRunRetainsWorkspaceWhenRequested(t *testing.T) {
 	if record.Workspace.Retention != "retained" {
 		t.Fatalf("workspace retention = %q, want retained", record.Workspace.Retention)
 	}
+	if record.EffectivePolicy.RetentionDefault != "retained" {
+		t.Fatalf("effective policy retention default = %q, want retained", record.EffectivePolicy.RetentionDefault)
+	}
 	if record.Workspace.Path == "" {
 		t.Fatal("retained workspace path not recorded")
 	}
@@ -326,8 +329,7 @@ func TestRunRetainsWorkspaceWhenRequested(t *testing.T) {
 		t.Fatalf("retained workspace path does not exist: %v", err)
 	}
 
-	workspaceDir := filepath.Join(record.Workspace.Path, "workspace")
-	readme, err := os.ReadFile(filepath.Join(workspaceDir, "README.md"))
+	readme, err := os.ReadFile(filepath.Join(record.Workspace.Path, "README.md"))
 	if err != nil {
 		t.Fatalf("read retained workspace README: %v", err)
 	}
@@ -340,6 +342,55 @@ func TestRunRetainsWorkspaceWhenRequested(t *testing.T) {
 	}
 	if !strings.Contains(string(output), record.Workspace.Path) {
 		t.Fatalf("CLI output does not include retained workspace path:\n%s", output)
+	}
+}
+
+func TestRunRetainsWorkspaceOnWorkloadFailure(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--retain-workspace",
+		"--",
+		"sh", "-c", "printf changed > README.md; exit 7",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded for failing workload command:\n%s", output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.Outcome.Type != "workload_command_exit" {
+		t.Fatalf("outcome = %q, want workload_command_exit", record.Outcome.Type)
+	}
+	if record.Workspace.Retention != "retained" {
+		t.Fatalf("workspace retention = %q, want retained", record.Workspace.Retention)
+	}
+	if record.Workspace.Path == "" {
+		t.Fatal("retained workspace path not recorded for failed workload")
+	}
+	if _, err := os.Stat(record.Workspace.Path); err != nil {
+		t.Fatalf("retained workspace path does not exist after failure: %v", err)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(record.Workspace.Path, "README.md"))
+	if err != nil {
+		t.Fatalf("read retained workspace README: %v", err)
+	}
+	if string(readme) != "changed" {
+		t.Fatalf("retained workspace README = %q, want changed", readme)
+	}
+
+	if !strings.Contains(string(output), "workspace retained at:") {
+		t.Fatalf("CLI output does not announce retained workspace:\n%s", output)
 	}
 }
 
