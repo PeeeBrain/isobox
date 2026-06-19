@@ -111,7 +111,7 @@ repositories.
 
 ## Current Limitations
 
-- No Runtime Backend or security isolation
+- Host Runtime Backend only; it does not provide strong isolation
 - No Dirty Source Snapshot support
 - No interactive review prompt
 - No explicit Reuse Input support
