@@ -63,6 +63,24 @@ The Workspace Source must be clean. `isobox run` rejects staged, unstaged, or
 untracked changes so that only explicitly committed content enters the
 Workspace. Dirty Source Snapshots are not supported in this POC.
 
+### Retain The Workspace For Debugging
+
+By default, the private Workspace is disposed after the Task Attempt. To keep
+it for review or debugging, pass `--retain-workspace`:
+
+```sh
+./bin/isobox run \
+  --source /path/to/repository \
+  --records /tmp/isobox-records \
+  --retain-workspace \
+  -- \
+  sh -c 'printf "changed\n" > README.md'
+```
+
+The CLI prints the retained path and the Task Record stores it under
+`workspace.path`. Retained Workspaces are a debugging aid; review should still
+be based on the captured Task Result.
+
 ## Review A Task Result
 
 Each execution creates a directory such as:

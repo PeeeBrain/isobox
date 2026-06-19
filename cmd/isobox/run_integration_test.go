@@ -293,6 +293,153 @@ func TestRunRecordsResultCaptureFailure(t *testing.T) {
 	}
 }
 
+func TestRunRetainsWorkspaceWhenRequested(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--retain-workspace",
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.Workspace.Retention != "retained" {
+		t.Fatalf("workspace retention = %q, want retained", record.Workspace.Retention)
+	}
+	if record.EffectivePolicy.RetentionDefault != "retained" {
+		t.Fatalf("effective policy retention default = %q, want retained", record.EffectivePolicy.RetentionDefault)
+	}
+	if record.Workspace.Path == "" {
+		t.Fatal("retained workspace path not recorded")
+	}
+	if _, err := os.Stat(record.Workspace.Path); err != nil {
+		t.Fatalf("retained workspace path does not exist: %v", err)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(record.Workspace.Path, "README.md"))
+	if err != nil {
+		t.Fatalf("read retained workspace README: %v", err)
+	}
+	if string(readme) != "changed" {
+		t.Fatalf("retained workspace README = %q, want changed", readme)
+	}
+
+	if !strings.Contains(string(output), "workspace retained at:") {
+		t.Fatalf("CLI output does not announce retained workspace:\n%s", output)
+	}
+	if !strings.Contains(string(output), record.Workspace.Path) {
+		t.Fatalf("CLI output does not include retained workspace path:\n%s", output)
+	}
+}
+
+func TestRunRetainsWorkspaceOnWorkloadFailure(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--retain-workspace",
+		"--",
+		"sh", "-c", "printf changed > README.md; exit 7",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded for failing workload command:\n%s", output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.Outcome.Type != "workload_command_exit" {
+		t.Fatalf("outcome = %q, want workload_command_exit", record.Outcome.Type)
+	}
+	if record.Workspace.Retention != "retained" {
+		t.Fatalf("workspace retention = %q, want retained", record.Workspace.Retention)
+	}
+	if record.Workspace.Path == "" {
+		t.Fatal("retained workspace path not recorded for failed workload")
+	}
+	if _, err := os.Stat(record.Workspace.Path); err != nil {
+		t.Fatalf("retained workspace path does not exist after failure: %v", err)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(record.Workspace.Path, "README.md"))
+	if err != nil {
+		t.Fatalf("read retained workspace README: %v", err)
+	}
+	if string(readme) != "changed" {
+		t.Fatalf("retained workspace README = %q, want changed", readme)
+	}
+
+	if !strings.Contains(string(output), "workspace retained at:") {
+		t.Fatalf("CLI output does not announce retained workspace:\n%s", output)
+	}
+}
+
+func TestRunCleansUpWorkspaceByDefault(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	cmd.Env = append(os.Environ(), "TMPDIR="+tmpDir)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.Workspace.Retention != "disposable" {
+		t.Fatalf("workspace retention = %q, want disposable", record.Workspace.Retention)
+	}
+	if record.Workspace.Path != "" {
+		t.Fatalf("disposable workspace path = %q, want empty", record.Workspace.Path)
+	}
+
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "isobox-workspace-") {
+			t.Fatalf("workspace was not cleaned up: %s", entry.Name())
+		}
+	}
+
+	if !strings.Contains(string(output), "workspace disposed") {
+		t.Fatalf("CLI output does not announce disposable workspace:\n%s", output)
+	}
+}
+
 func TestPromoteAppliesReviewedTaskResultToWorkspaceSource(t *testing.T) {
 	source := initGitRepo(t)
 	records := t.TempDir()
@@ -540,6 +687,10 @@ type recordView struct {
 		RetentionDefault string   `json:"retention_default"`
 		Limitations      []string `json:"limitations"`
 	} `json:"effective_policy"`
+	Workspace struct {
+		Retention string `json:"retention"`
+		Path      string `json:"path"`
+	} `json:"workspace"`
 	Result struct {
 		ExitStatus int    `json:"exit_status"`
 		Stdout     string `json:"stdout"`

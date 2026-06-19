@@ -22,8 +22,14 @@ type taskRecord struct {
 	ID              string             `json:"id"`
 	CreatedAt       string             `json:"created_at"`
 	EffectivePolicy effectivePolicy    `json:"effective_policy"`
+	Workspace       workspaceInfo      `json:"workspace"`
 	Result          taskResult         `json:"result"`
 	Outcome         taskAttemptOutcome `json:"outcome"`
+}
+
+type workspaceInfo struct {
+	Retention string `json:"retention"`
+	Path      string `json:"path,omitempty"`
 }
 
 type taskAttemptOutcome struct {
@@ -59,9 +65,10 @@ type taskResult struct {
 }
 
 type runOptions struct {
-	source  string
-	records string
-	command []string
+	source          string
+	records         string
+	retainWorkspace bool
+	command         []string
 }
 
 func main() {
@@ -107,6 +114,8 @@ func parseRun(args []string) (runOptions, error) {
 				return opts, errors.New("--records requires a path")
 			}
 			opts.records = args[i]
+		case "--retain-workspace":
+			opts.retainWorkspace = true
 		case "--":
 			opts.command = args[i+1:]
 			i = len(args)
@@ -144,6 +153,11 @@ func runTask(opts runOptions) error {
 	}
 
 	backend := runtimebackend.NewHost()
+	retention := "disposable"
+	if opts.retainWorkspace {
+		retention = "retained"
+	}
+
 	record := taskRecord{
 		SchemaVersion: taskRecordSchemaVersion,
 		ID:            id,
@@ -153,9 +167,10 @@ func runTask(opts runOptions) error {
 			WorkspaceSource:  opts.source,
 			WorkloadCommand:  opts.command,
 			RuntimeBackend:   backend.Name(),
-			RetentionDefault: "disposable",
+			RetentionDefault: retention,
 			Limitations:      backend.Limitations(),
 		},
+		Workspace: workspaceInfo{Retention: retention},
 	}
 
 	ws, err := workspace.CreateRepository(opts.source)
@@ -174,6 +189,11 @@ func runTask(opts runOptions) error {
 		return fmt.Errorf("create Repository Workspace: %w", err)
 	}
 	defer ws.Close()
+
+	if opts.retainWorkspace {
+		record.Workspace.Path = ws.Retain()
+	}
+	defer reportWorkspace(record.Workspace)
 
 	result, launchErr := backend.Run(context.Background(), runtimebackend.RunRequest{
 		Workdir: ws.Root(),
@@ -254,6 +274,14 @@ func command(dir, name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	return cmd
+}
+
+func reportWorkspace(ws workspaceInfo) {
+	if ws.Retention == "retained" {
+		fmt.Printf("workspace retained at: %s\n", ws.Path)
+		return
+	}
+	fmt.Println("workspace disposed")
 }
 
 func newID() (string, error) {
