@@ -78,8 +78,10 @@ it for review or debugging, pass `--retain-workspace`:
 ```
 
 The CLI prints the retained path and the Task Record stores it under
-`workspace.path`. Retained Workspaces are a debugging aid; review should still
-be based on the captured Task Result.
+`workspace.path`. That path is the retained repository Workspace root, so it
+contains the files exactly as the Workload Command left them. Retained
+Workspaces are a debugging aid; review should still be based on the captured
+Task Result.
 
 ## Review A Task Result
 
@@ -98,10 +100,13 @@ cat /tmp/isobox-records/task-0123456789abcdef/record.json
 
 The record contains:
 
-- the Workspace Source path
-- the Workload Command
-- stdout and stderr
-- process exit status
+- the Task Record schema version
+- the Effective Policy, including the Workspace Source, Workload Command,
+  selected Runtime Backend, retention mode, and known backend limitations
+- the Workspace retention state and retained Workspace path, when requested
+- the Task Attempt Outcome, distinguishing success, preparation failure,
+  launch failure, Workload Command exit, and result-capture failure
+- stdout, stderr, and process exit status
 - the captured Git diff
 
 ## Promote A Result
@@ -114,7 +119,8 @@ repository:
 ```
 
 Promotion uses `git apply`. It fails if the source repository has changed in a
-way that prevents the captured patch from applying.
+way that prevents the captured patch from applying. Promotion loads and
+validates the schema-versioned Task Record before applying the captured diff.
 
 ## Development
 
