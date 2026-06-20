@@ -167,6 +167,11 @@ func validTaskRecord() taskRecord {
 			RuntimeBackend:   "host-process",
 			RetentionDefault: "disposable",
 		},
+		Workspace: workspaceInfo{
+			SourceType:   "repository",
+			SourceCommit: "abc123",
+			Retention:    "disposable",
+		},
 		Result:  taskResult{Diff: "diff content"},
 		Outcome: taskAttemptOutcome{Type: outcomeSuccess},
 	}

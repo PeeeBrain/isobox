@@ -29,6 +29,28 @@ func TestCreateRepositoryClonesCleanSource(t *testing.T) {
 	}
 }
 
+func TestCreateRepositoryRecordsSourceCommit(t *testing.T) {
+	source := initGitRepo(t)
+
+	commit, err := workspace.HeadCommit(source)
+	if err != nil {
+		t.Fatalf("HeadCommit failed: %v", err)
+	}
+	if commit == "" {
+		t.Fatal("HeadCommit returned empty commit")
+	}
+
+	ws, err := workspace.CreateRepository(source)
+	if err != nil {
+		t.Fatalf("CreateRepository failed: %v", err)
+	}
+	defer ws.Close()
+
+	if ws.SourceCommit() != commit {
+		t.Fatalf("workspace source_commit = %q, want %q", ws.SourceCommit(), commit)
+	}
+}
+
 func TestCreateRepositoryRejectsDirtySource(t *testing.T) {
 	source := initGitRepo(t)
 	if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("uncommitted\n"), 0o644); err != nil {

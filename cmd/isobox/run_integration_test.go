@@ -636,6 +636,211 @@ func TestPromoteRejectsUnsupportedTaskRecordSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestRunRecordsRepositoryWorkspaceSourceCommit(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.Workspace.SourceType != "repository" {
+		t.Fatalf("workspace source_type = %q, want repository", record.Workspace.SourceType)
+	}
+	wantCommit := headCommit(t, source)
+	if record.Workspace.SourceCommit != wantCommit {
+		t.Fatalf("workspace source_commit = %q, want %q", record.Workspace.SourceCommit, wantCommit)
+	}
+}
+
+func TestPromoteRejectsEmptyDiff(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	recordDir := writePromotableRecord(t, source, records, "")
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded for empty diff:\n%s", output)
+	}
+	if !strings.Contains(string(output), "no diff to promote") {
+		t.Fatalf("error does not indicate empty diff:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified by rejected promotion: %q", readme)
+	}
+}
+
+func TestPromoteRejectsNonSuccessOutcome(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	record := validPromotableRecord(t, source)
+	record["outcome"] = map[string]any{"type": "workload_command_exit", "exit_code": 7}
+	recordDir := writeRecordMap(t, records, "task-failed", record)
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded for non-success outcome:\n%s", output)
+	}
+	out := string(output)
+	if !strings.Contains(out, "workload_command_exit") {
+		t.Fatalf("error does not mention outcome type:\n%s", output)
+	}
+	if !strings.Contains(out, "only successful tasks can be promoted") {
+		t.Fatalf("error does not explain success requirement:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified by rejected promotion: %q", readme)
+	}
+}
+
+func TestPromoteRejectsNonRepositoryWorkspaceSourceType(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	record := validPromotableRecord(t, source)
+	record["workspace"] = map[string]any{
+		"source_type":   "directory",
+		"source_commit": headCommit(t, source),
+		"retention":     "disposable",
+	}
+	recordDir := writeRecordMap(t, records, "task-directory", record)
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded for directory workspace:\n%s", output)
+	}
+	if !strings.Contains(string(output), "only supported for Repository Workspace") {
+		t.Fatalf("error does not explain repository workspace requirement:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified by rejected promotion: %q", readme)
+	}
+}
+
+func TestPromoteRejectsStaleWorkspaceSource(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	recordDir := writePromotableRecord(t, source, records, "diff content")
+
+	if err := os.WriteFile(filepath.Join(source, "stale.md"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, source, "git", "add", "stale.md")
+	run(t, source, "git", "commit", "-m", "advance source")
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded for stale workspace source:\n%s", output)
+	}
+	if !strings.Contains(string(output), "trusted repository has changed") {
+		t.Fatalf("error does not indicate stale source:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified by rejected promotion: %q", readme)
+	}
+}
+
+func headCommit(t *testing.T, dir string) string {
+	t.Helper()
+
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse failed: %v\n%s", err, output)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func validPromotableRecord(t *testing.T, source string) map[string]any {
+	t.Helper()
+
+	return map[string]any{
+		"schema_version": "v1",
+		"id":             "task-promote",
+		"created_at":     "2026-06-20T00:00:00Z",
+		"effective_policy": map[string]any{
+			"schema_version":    "v1",
+			"workspace_source":  source,
+			"workload_command":  []string{"sh", "-c", "true"},
+			"runtime_backend":   "host-process",
+			"retention_default": "disposable",
+		},
+		"workspace": map[string]any{
+			"source_type":   "repository",
+			"source_commit": headCommit(t, source),
+			"retention":     "disposable",
+		},
+		"result":  map[string]any{"diff": "diff content"},
+		"outcome": map[string]any{"type": "success"},
+	}
+}
+
+func writePromotableRecord(t *testing.T, source, records, diff string) string {
+	t.Helper()
+
+	record := validPromotableRecord(t, source)
+	record["result"] = map[string]any{"diff": diff}
+	return writeRecordMap(t, records, "task-promote", record)
+}
+
+func writeRecordMap(t *testing.T, records, id string, record map[string]any) string {
+	t.Helper()
+
+	recordDir := filepath.Join(records, id)
+	if err := os.MkdirAll(recordDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recordBytes, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(recordDir, "record.json"), append(recordBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return recordDir
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 
@@ -688,8 +893,10 @@ type recordView struct {
 		Limitations      []string `json:"limitations"`
 	} `json:"effective_policy"`
 	Workspace struct {
-		Retention string `json:"retention"`
-		Path      string `json:"path"`
+		SourceType   string `json:"source_type"`
+		SourceCommit string `json:"source_commit"`
+		Retention    string `json:"retention"`
+		Path         string `json:"path"`
 	} `json:"workspace"`
 	Result struct {
 		ExitStatus int    `json:"exit_status"`
