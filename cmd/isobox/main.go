@@ -29,8 +29,10 @@ type taskRecord struct {
 }
 
 type workspaceInfo struct {
-	Retention string `json:"retention"`
-	Path      string `json:"path,omitempty"`
+	SourceType   string `json:"source_type"`
+	SourceCommit string `json:"source_commit"`
+	Retention    string `json:"retention"`
+	Path         string `json:"path,omitempty"`
 }
 
 type taskAttemptOutcome struct {
@@ -199,6 +201,9 @@ func runTask(opts runOptions) error {
 	}
 	defer ws.Close()
 
+	record.Workspace.SourceType = "repository"
+	record.Workspace.SourceCommit = ws.SourceCommit()
+
 	if opts.retainWorkspace {
 		record.Workspace.Path = ws.Retain()
 	}
@@ -265,8 +270,29 @@ func promote(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	if record.Outcome.Type != outcomeSuccess {
+		return fmt.Errorf("cannot promote task %q: task outcome is %q, only successful tasks can be promoted", record.ID, record.Outcome.Type)
+	}
+
+	if record.Workspace.SourceType != "repository" {
+		return fmt.Errorf("cannot promote task %q: promotion is only supported for Repository Workspace results", record.ID)
+	}
+
+	if record.Workspace.SourceCommit == "" {
+		return fmt.Errorf("cannot promote task %q: task record is missing Workspace Source commit", record.ID)
+	}
+
+	currentCommit, err := workspace.HeadCommit(record.EffectivePolicy.WorkspaceSource)
+	if err != nil {
+		return fmt.Errorf("cannot promote task %q: inspect trusted repository: %w", record.ID, err)
+	}
+	if currentCommit != record.Workspace.SourceCommit {
+		return fmt.Errorf("cannot promote task %q: trusted repository has changed since the task was recorded", record.ID)
+	}
+
 	if record.Result.Diff == "" {
-		return errors.New("task result has no diff to promote")
+		return fmt.Errorf("cannot promote task %q: task result has no diff to promote", record.ID)
 	}
 
 	cmd := command(record.EffectivePolicy.WorkspaceSource, "git", "apply", "--whitespace=nowarn")
@@ -274,7 +300,7 @@ func promote(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("promote task result: %w", err)
+		return fmt.Errorf("promote task %q: git apply failed: %w", record.ID, err)
 	}
 	return nil
 }
