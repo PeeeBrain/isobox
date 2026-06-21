@@ -131,6 +131,71 @@ func TestRunCapturesSchemaVersionedEffectivePolicy(t *testing.T) {
 	}
 }
 
+func TestRunRecordsResourcePolicyAndEnforcement(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.EffectivePolicy.ResourceLimits.MaxDurationSeconds != 0 {
+		t.Fatalf("default max_duration_seconds = %d, want 0", record.EffectivePolicy.ResourceLimits.MaxDurationSeconds)
+	}
+	if record.EffectivePolicy.ResourceLimits.MaxOutputBytes != 0 {
+		t.Fatalf("default max_output_bytes = %d, want 0", record.EffectivePolicy.ResourceLimits.MaxOutputBytes)
+	}
+	if record.EffectivePolicy.ResourceLimits.MaxCPUCores != 0 {
+		t.Fatalf("default max_cpu_cores = %d, want 0", record.EffectivePolicy.ResourceLimits.MaxCPUCores)
+	}
+	if record.EffectivePolicy.ResourceLimits.MaxMemoryBytes != 0 {
+		t.Fatalf("default max_memory_bytes = %d, want 0", record.EffectivePolicy.ResourceLimits.MaxMemoryBytes)
+	}
+	if record.EffectivePolicy.ResourceLimits.MaxProcesses != 0 {
+		t.Fatalf("default max_processes = %d, want 0", record.EffectivePolicy.ResourceLimits.MaxProcesses)
+	}
+	if record.EffectivePolicy.ResourceLimits.MaxDiskBytes != 0 {
+		t.Fatalf("default max_disk_bytes = %d, want 0", record.EffectivePolicy.ResourceLimits.MaxDiskBytes)
+	}
+	if record.EffectivePolicy.ResourceLimits.MaxFileDescriptors != 0 {
+		t.Fatalf("default max_file_descriptors = %d, want 0", record.EffectivePolicy.ResourceLimits.MaxFileDescriptors)
+	}
+
+	if record.EffectivePolicy.ResourceEnforcement.RuntimeBackend != "host-process" {
+		t.Fatalf("resource enforcement runtime_backend = %q, want host-process", record.EffectivePolicy.ResourceEnforcement.RuntimeBackend)
+	}
+	if len(record.EffectivePolicy.ResourceEnforcement.Limits) == 0 {
+		t.Fatal("resource enforcement limits not recorded")
+	}
+
+	for _, l := range record.EffectivePolicy.ResourceEnforcement.Limits {
+		if l.Status != "not_enforced" {
+			t.Fatalf("%s enforcement status = %q, want not_enforced", l.Name, l.Status)
+		}
+		if !strings.Contains(l.Detail, "does not enforce") {
+			t.Fatalf("%s enforcement detail does not document non-enforcement: %q", l.Name, l.Detail)
+		}
+	}
+
+	if !strings.Contains(string(output), "workspace disposed") {
+		t.Fatalf("CLI output does not announce disposable workspace:\n%s", output)
+	}
+}
+
 func TestRunRecordsEffectivePolicyWhenWorkloadCommandFails(t *testing.T) {
 	source := initGitRepo(t)
 	records := t.TempDir()
@@ -917,7 +982,24 @@ type recordView struct {
 		WorkloadCommand  []string `json:"workload_command"`
 		RuntimeBackend   string   `json:"runtime_backend"`
 		RetentionDefault string   `json:"retention_default"`
-		Limitations      []string `json:"limitations"`
+		ResourceLimits   struct {
+			MaxDurationSeconds int64 `json:"max_duration_seconds"`
+			MaxOutputBytes     int64 `json:"max_output_bytes"`
+			MaxCPUCores        int64 `json:"max_cpu_cores"`
+			MaxMemoryBytes     int64 `json:"max_memory_bytes"`
+			MaxProcesses       int64 `json:"max_processes"`
+			MaxDiskBytes       int64 `json:"max_disk_bytes"`
+			MaxFileDescriptors int64 `json:"max_file_descriptors"`
+		} `json:"resource_limits"`
+		ResourceEnforcement struct {
+			RuntimeBackend string `json:"runtime_backend"`
+			Limits         []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+				Detail string `json:"detail"`
+			} `json:"limits"`
+		} `json:"resource_enforcement"`
+		Limitations []string `json:"limitations"`
 	} `json:"effective_policy"`
 	Workspace struct {
 		SourceType   string `json:"source_type"`

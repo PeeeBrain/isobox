@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"isobox/internal/policy"
 	"isobox/internal/runtimebackend"
 )
 
@@ -95,5 +96,49 @@ func TestHostBackendDocumentsLowerAssurance(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("limitations do not document lower-assurance host backend: %#v", limitations)
+	}
+}
+
+func TestHostBackendReportsResourceLimitsNotEnforced(t *testing.T) {
+	backend := runtimebackend.NewHost()
+	enforcement := backend.ResourceEnforcement()
+
+	if enforcement.RuntimeBackend != "host-process" {
+		t.Fatalf("enforcement runtime_backend = %q, want host-process", enforcement.RuntimeBackend)
+	}
+
+	wantCategories := map[string]policy.EnforcementStatus{
+		"time":             policy.NotEnforced,
+		"output_size":      policy.NotEnforced,
+		"cpu":              policy.NotEnforced,
+		"memory":           policy.NotEnforced,
+		"process":          policy.NotEnforced,
+		"disk":             policy.NotEnforced,
+		"file_descriptors": policy.NotEnforced,
+	}
+
+	if len(enforcement.Limits) != len(wantCategories) {
+		t.Fatalf("enforcement limits = %d, want %d: %#v", len(enforcement.Limits), len(wantCategories), enforcement.Limits)
+	}
+
+	seen := make(map[string]bool)
+	for _, l := range enforcement.Limits {
+		want, ok := wantCategories[l.Name]
+		if !ok {
+			t.Fatalf("unexpected resource limit category: %q", l.Name)
+		}
+		if l.Status != want {
+			t.Fatalf("%s status = %q, want %q", l.Name, l.Status, want)
+		}
+		if !strings.Contains(l.Detail, "does not enforce") {
+			t.Fatalf("%s detail does not state non-enforcement: %q", l.Name, l.Detail)
+		}
+		seen[l.Name] = true
+	}
+
+	for name := range wantCategories {
+		if !seen[name] {
+			t.Fatalf("missing resource limit category: %q", name)
+		}
 	}
 }

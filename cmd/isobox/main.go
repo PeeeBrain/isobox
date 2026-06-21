@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"isobox/internal/policy"
 	"isobox/internal/runtimebackend"
 	"isobox/internal/workspace"
 )
@@ -51,12 +52,14 @@ const (
 )
 
 type effectivePolicy struct {
-	SchemaVersion    string   `json:"schema_version"`
-	WorkspaceSource  string   `json:"workspace_source"`
-	WorkloadCommand  []string `json:"workload_command"`
-	RuntimeBackend   string   `json:"runtime_backend"`
-	RetentionDefault string   `json:"retention_default"`
-	Limitations      []string `json:"limitations"`
+	SchemaVersion       string                     `json:"schema_version"`
+	WorkspaceSource     string                     `json:"workspace_source"`
+	WorkloadCommand     []string                   `json:"workload_command"`
+	RuntimeBackend      string                     `json:"runtime_backend"`
+	RetentionDefault    string                     `json:"retention_default"`
+	ResourceLimits      policy.ResourceLimits      `json:"resource_limits"`
+	ResourceEnforcement policy.ResourceEnforcement `json:"resource_enforcement"`
+	Limitations         []string                   `json:"limitations"`
 }
 
 type taskResult struct {
@@ -160,17 +163,23 @@ func runTask(opts runOptions) error {
 		retention = "retained"
 	}
 
+	sandboxPolicy := policy.SandboxPolicy{
+		ResourceLimits: policy.DefaultResourceLimits(),
+	}
+
 	record := taskRecord{
 		SchemaVersion: taskRecordSchemaVersion,
 		ID:            id,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 		EffectivePolicy: effectivePolicy{
-			SchemaVersion:    "v1",
-			WorkspaceSource:  opts.source,
-			WorkloadCommand:  opts.command,
-			RuntimeBackend:   backend.Name(),
-			RetentionDefault: retention,
-			Limitations:      backend.Limitations(),
+			SchemaVersion:       "v1",
+			WorkspaceSource:     opts.source,
+			WorkloadCommand:     opts.command,
+			RuntimeBackend:      backend.Name(),
+			RetentionDefault:    retention,
+			ResourceLimits:      policy.ResolveResourceLimits(sandboxPolicy.ResourceLimits),
+			ResourceEnforcement: backend.ResourceEnforcement(),
+			Limitations:         backend.Limitations(),
 		},
 		Workspace: workspaceInfo{Retention: retention},
 	}
