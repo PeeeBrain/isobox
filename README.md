@@ -103,7 +103,8 @@ The record contains:
 - the Task Record schema version
 - the Effective Policy, including the Workspace Source, Workload Command,
   selected Runtime Backend, retention mode, and known backend limitations
-- the Workspace retention state and retained Workspace path, when requested
+- the Workspace source type (`repository`), source commit, retention state,
+  and retained Workspace path, when requested
 - the Task Attempt Outcome, distinguishing success, preparation failure,
   launch failure, Workload Command exit, and result-capture failure
 - stdout, stderr, and process exit status
@@ -118,9 +119,19 @@ repository:
 ./bin/isobox promote /tmp/isobox-records/task-0123456789abcdef
 ```
 
-Promotion uses `git apply`. It fails if the source repository has changed in a
-way that prevents the captured patch from applying. Promotion loads and
-validates the schema-versioned Task Record before applying the captured diff.
+Promotion is a review-gated movement from a Repository Workspace Task Result
+into the trusted source repository. It loads and validates the Task Record,
+then checks all of the following before applying the captured diff with
+`git apply`:
+
+- the Task Attempt Outcome is `success`
+- the Workspace source type is `repository`
+- the recorded Workspace Source commit matches the current HEAD of the
+trusted source repository
+- the captured diff is non-empty
+
+If any check fails, the source repository is left unchanged and a clear error
+is reported.
 
 ## Development
 

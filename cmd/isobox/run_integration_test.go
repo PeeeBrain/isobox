@@ -780,6 +780,33 @@ func TestPromoteRejectsStaleWorkspaceSource(t *testing.T) {
 	}
 }
 
+func TestPromoteRejectsMissingSourceCommit(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	record := validPromotableRecord(t, source)
+	workspace := record["workspace"].(map[string]any)
+	workspace["source_commit"] = ""
+	recordDir := writeRecordMap(t, records, "task-missing-commit", record)
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded for record missing source_commit:\n%s", output)
+	}
+	if !strings.Contains(string(output), "missing Workspace Source commit") {
+		t.Fatalf("error does not indicate missing source_commit:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified by rejected promotion: %q", readme)
+	}
+}
+
 func headCommit(t *testing.T, dir string) string {
 	t.Helper()
 
