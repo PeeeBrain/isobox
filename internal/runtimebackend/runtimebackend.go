@@ -3,6 +3,8 @@ package runtimebackend
 import (
 	"context"
 	"io"
+
+	"isobox/internal/policy"
 )
 
 // Backend executes a Workload Command inside a Sandbox.
@@ -19,6 +21,12 @@ type Backend interface {
 	// Policy so the Task Record never implies stronger isolation than the
 	// backend provides.
 	Limitations() []string
+
+	// ResourceEnforcement returns a structured report describing which
+	// resource limits this backend enforces, partially enforces, or does not
+	// enforce. This is recorded in the Effective Policy alongside the resolved
+	// resource limits.
+	ResourceEnforcement() policy.ResourceEnforcement
 
 	// Run executes the requested command and returns its captured output and
 	// exit status. A non-zero exit status is returned in the result without an

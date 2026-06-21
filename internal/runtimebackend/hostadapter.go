@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+
+	"isobox/internal/policy"
 )
 
 // Host is a Runtime Backend that executes Workload Commands as normal host
@@ -28,6 +30,38 @@ func (h *Host) Name() string {
 func (h *Host) Limitations() []string {
 	return []string{
 		"host-process: workload executes as a normal host process with the current user's privileges, environment, and filesystem access; this Runtime Backend does not provide strong isolation",
+	}
+}
+
+// ResourceEnforcement reports that the host backend does not enforce resource
+// limits in this milestone. The returned report clearly records each limit
+// category as not_enforced so the Task Record does not overstate containment.
+func (h *Host) ResourceEnforcement() policy.ResourceEnforcement {
+	categories := []struct {
+		name   string
+		detail string
+	}{
+		{"time", "the host-process backend does not enforce time limits in this milestone"},
+		{"output_size", "the host-process backend does not enforce output size limits in this milestone"},
+		{"cpu", "the host-process backend does not enforce CPU limits in this milestone"},
+		{"memory", "the host-process backend does not enforce memory limits in this milestone"},
+		{"process", "the host-process backend does not enforce process limits in this milestone"},
+		{"disk", "the host-process backend does not enforce disk limits in this milestone"},
+		{"file_descriptors", "the host-process backend does not enforce file descriptor limits in this milestone"},
+	}
+
+	limits := make([]policy.ResourceLimitEnforcement, len(categories))
+	for i, c := range categories {
+		limits[i] = policy.ResourceLimitEnforcement{
+			Name:   c.name,
+			Status: policy.NotEnforced,
+			Detail: c.detail,
+		}
+	}
+
+	return policy.ResourceEnforcement{
+		RuntimeBackend: h.Name(),
+		Limits:         limits,
 	}
 }
 
