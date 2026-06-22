@@ -1111,6 +1111,180 @@ func TestRunRejectsReuseInputMissingEquals(t *testing.T) {
 	}
 }
 
+func TestRunGeneratesPromotionReportWithHighRiskCategories(t *testing.T) {
+	source := initGitRepoWithTrackedHighRiskFiles(t)
+	records := t.TempDir()
+
+	// The Workload Command modifies pre-existing tracked files spanning each
+	// high-risk category plus an ordinary source file. The Repository Workspace
+	// diff captures modifications to tracked files, so each category is
+	// detectable from the captured Task Result.
+	ordinary := "printf 'new\n' >> README.md"
+	script := "printf 'echo run\n' >> scripts/build.sh"
+	hook := "printf '#!/bin/sh\necho hook\n' > .husky/pre-commit"
+	manifest := "printf '{\"name\":\"app\"}\n' > package.json"
+	ci := "printf 'on: [push]\n' > .github/workflows/ci.yml"
+	large := "yes generated | head -n 600 > report.txt"
+	binary := "printf '\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00' > assets/logo.png"
+	workload := strings.Join([]string{ordinary, script, hook, manifest, ci, large, binary}, "; ")
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", workload,
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.PromotionReport == nil {
+		t.Fatalf("task record missing promotion_report")
+	}
+	if record.PromotionReport.SchemaVersion != "v1" {
+		t.Fatalf("promotion_report schema_version = %q, want v1", record.PromotionReport.SchemaVersion)
+	}
+
+	changedByPath := map[string]fileChangeView{}
+	for _, c := range record.PromotionReport.ChangedFiles {
+		changedByPath[c.Path] = c
+	}
+
+	wantChanged := []string{
+		"README.md",
+		"scripts/build.sh",
+		".husky/pre-commit",
+		"package.json",
+		".github/workflows/ci.yml",
+		"report.txt",
+		"assets/logo.png",
+	}
+	for _, p := range wantChanged {
+		if _, ok := changedByPath[p]; !ok {
+			t.Fatalf("promotion_report changed_files missing %q: %#v", p, record.PromotionReport.ChangedFiles)
+		}
+	}
+
+	if c, ok := changedByPath["README.md"]; ok && len(c.Categories) != 0 {
+		t.Fatalf("ordinary README.md change flagged high-risk: %#v", c.Categories)
+	}
+
+	haveCategory := func(category string) bool {
+		for _, hr := range record.PromotionReport.HighRisk {
+			if hr.Category == category {
+				return true
+			}
+		}
+		return false
+	}
+	for _, category := range []string{
+		"script", "hook", "dependency_manifest", "ci_workflow", "large_file", "binary",
+	} {
+		if !haveCategory(category) {
+			t.Fatalf("promotion_report high_risk missing %q: %#v", category, record.PromotionReport.HighRisk)
+		}
+	}
+}
+
+func TestPromotionReportIsInformationalAndPromotionStaysExplicit(t *testing.T) {
+	source := initGitRepoWithTrackedHighRiskFiles(t)
+	records := t.TempDir()
+
+	// A high-risk change (modifying a dependency manifest) should still be
+	// promotable on explicit request; the report flags risk but never gates
+	// Promotion. The user remains the review gate.
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf '{\"name\":\"app\"}\n' > package.json",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+	if record.PromotionReport == nil {
+		t.Fatalf("task record missing promotion_report")
+	}
+	if !highRiskHasCategory(record.PromotionReport.HighRisk, "dependency_manifest") {
+		t.Fatalf("promotion_report did not flag high-risk dependency manifest: %#v", record.PromotionReport.HighRisk)
+	}
+
+	promote := exec.Command("go", "run", ".", "promote", recordPath)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	promoteOutput, err := promote.CombinedOutput()
+	if err != nil {
+		t.Fatalf("explicit promote of high-risk result failed: %v\n%s", err, promoteOutput)
+	}
+	if !strings.Contains(string(promoteOutput), "promotion report:") {
+		t.Fatalf("promote did not print the promotion report:\n%s", promoteOutput)
+	}
+	if !strings.Contains(string(promoteOutput), "package.json") {
+		t.Fatalf("promote report did not list the changed file:\n%s", promoteOutput)
+	}
+
+	promoted, err := os.ReadFile(filepath.Join(source, "package.json"))
+	if err != nil {
+		t.Fatalf("read promoted package.json: %v", err)
+	}
+	if string(promoted) != "{\"name\":\"app\"}\n" {
+		t.Fatalf("high-risk change was not applied by explicit promotion: %q", promoted)
+	}
+}
+
+func highRiskHasCategory(highRisk []highRiskView, category string) bool {
+	for _, hr := range highRisk {
+		if hr.Category == category {
+			return true
+		}
+	}
+	return false
+}
+
+func initGitRepoWithTrackedHighRiskFiles(t *testing.T) string {
+	t.Helper()
+
+	dir := initGitRepo(t)
+	// Pre-create tracked files for each high-risk category so a Workload
+	// Command can modify them and the Repository Workspace diff captures
+	// the change.
+	mustWrite(t, dir, "package.json", []byte("{}\n"))
+	mustWrite(t, dir, "scripts/build.sh", []byte("#!/bin/sh\necho build\n"))
+	mustWrite(t, dir, ".husky/pre-commit", []byte("#!/bin/sh\n"))
+	mustWrite(t, dir, ".github/workflows/ci.yml", []byte("on: []\n"))
+	mustWrite(t, dir, "report.txt", []byte("line\n"))
+	// A tracked binary file (NUL bytes so Git treats it as binary).
+	mustWrite(t, dir, "assets/logo.png", []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x01})
+	run(t, dir, "git", "add", ".")
+	run(t, dir, "git", "commit", "-m", "add tracked high-risk files")
+	return dir
+}
+
+func mustWrite(t *testing.T, dir, rel string, content []byte) {
+	t.Helper()
+	path := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func headCommit(t *testing.T, dir string) string {
 	t.Helper()
 
@@ -1277,6 +1451,26 @@ type recordView struct {
 		ExitCode int    `json:"exit_code"`
 		Error    string `json:"error"`
 	} `json:"outcome"`
+	PromotionReport *promotionReportView `json:"promotion_report,omitempty"`
+}
+
+type promotionReportView struct {
+	SchemaVersion string           `json:"schema_version"`
+	ChangedFiles  []fileChangeView `json:"changed_files"`
+	HighRisk      []highRiskView   `json:"high_risk"`
+}
+
+type fileChangeView struct {
+	Path         string   `json:"path"`
+	Status       string   `json:"status"`
+	Categories   []string `json:"categories,omitempty"`
+	AddedLines   int      `json:"added_lines"`
+	RemovedLines int      `json:"removed_lines"`
+}
+
+type highRiskView struct {
+	Category string   `json:"category"`
+	Paths    []string `json:"paths"`
 }
 
 func onlyTaskRecord(t *testing.T, records string) string {

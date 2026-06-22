@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"isobox/internal/policy"
+	"isobox/internal/promotion"
 	"isobox/internal/runtimebackend"
 	"isobox/internal/workspace"
 )
@@ -27,6 +28,11 @@ type taskRecord struct {
 	Workspace       workspaceInfo      `json:"workspace"`
 	Result          taskResult         `json:"result"`
 	Outcome         taskAttemptOutcome `json:"outcome"`
+	// PromotionReport is the initial Promotion Report generated from the
+	// Task Result diff. It is informational and never gates Promotion; it is
+	// captured here so review can focus on high-risk changes before explicit
+	// Promotion. It is omitted when no diff was captured.
+	PromotionReport *promotion.Report `json:"promotion_report,omitempty"`
 }
 
 type workspaceInfo struct {
@@ -266,6 +272,7 @@ func runTask(opts runOptions) error {
 		return fmt.Errorf("capture task result diff: %w", err)
 	}
 	record.Result.Diff = diff
+	record.PromotionReport = promotion.GenerateReport(diff)
 
 	if result.ExitStatus != 0 {
 		record.Outcome = taskAttemptOutcome{Type: outcomeWorkloadCommandExit, ExitCode: result.ExitStatus}
@@ -323,6 +330,13 @@ func promote(args []string) error {
 
 	if record.Result.Diff == "" {
 		return fmt.Errorf("cannot promote task %q: task result has no diff to promote", record.ID)
+	}
+
+	// The Promotion Report is informational: it focuses review on high-risk
+	// changes but never gates or auto-applies Promotion. The user remains the
+	// review gate by running `isobox promote` explicitly.
+	if record.PromotionReport != nil {
+		fmt.Print(record.PromotionReport.Summarize())
 	}
 
 	cmd := command(record.EffectivePolicy.WorkspaceSource, "git", "apply", "--whitespace=nowarn")

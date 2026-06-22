@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"isobox/internal/policy"
+	"isobox/internal/promotion"
 )
 
 const (
@@ -18,6 +19,10 @@ const (
 
 var supportedTaskRecordSchemaVersions = map[string]struct{}{
 	taskRecordSchemaVersion: {},
+}
+
+var supportedPromotionReportSchemaVersions = map[string]struct{}{
+	promotion.ReportSchemaVersion: {},
 }
 
 func loadRecord(recordDir string) (taskRecord, error) {
@@ -59,6 +64,33 @@ func validateTaskRecord(record taskRecord) error {
 	}
 	if err := validateOutcome(record.Outcome); err != nil {
 		return err
+	}
+	if err := validatePromotionReport(record.PromotionReport); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePromotionReport(report *promotion.Report) error {
+	if report == nil {
+		return nil
+	}
+	if report.SchemaVersion == "" {
+		return errors.New("promotion_report missing required field: schema_version")
+	}
+	if _, ok := supportedPromotionReportSchemaVersions[report.SchemaVersion]; !ok {
+		return fmt.Errorf("promotion_report has unsupported schema_version %q (isobox supports %s)",
+			report.SchemaVersion, supportedPromotionReportSchemaVersionList())
+	}
+	for i, c := range report.ChangedFiles {
+		if c.Path == "" {
+			return fmt.Errorf("promotion_report changed_files[%d]: missing path", i)
+		}
+		switch c.Status {
+		case "added", "modified", "deleted":
+		default:
+			return fmt.Errorf("promotion_report changed_files[%d] (%s): unsupported status %q", i, c.Path, c.Status)
+		}
 	}
 	return nil
 }
@@ -113,6 +145,15 @@ func validateOutcome(o taskAttemptOutcome) error {
 func supportedTaskRecordSchemaVersionList() string {
 	versions := make([]string, 0, len(supportedTaskRecordSchemaVersions))
 	for version := range supportedTaskRecordSchemaVersions {
+		versions = append(versions, version)
+	}
+	sort.Strings(versions)
+	return strings.Join(versions, ", ")
+}
+
+func supportedPromotionReportSchemaVersionList() string {
+	versions := make([]string, 0, len(supportedPromotionReportSchemaVersions))
+	for version := range supportedPromotionReportSchemaVersions {
 		versions = append(versions, version)
 	}
 	sort.Strings(versions)
