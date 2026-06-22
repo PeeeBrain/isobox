@@ -100,6 +100,10 @@ _Avoid_: folder workspace, plain workspace
 The review-gated movement of output from a Repository Workspace into its trusted repository.
 _Avoid_: export, apply
 
+**Promotion Report**:
+A structured changed-file summary generated from a Task Result that flags high-risk categories for focused review before explicit Promotion. It is informational and never gates or auto-applies Promotion.
+_Avoid_: risk report, review verdict
+
 **Export**:
 The movement of task output or artifacts out of a Sandbox without applying them to a trusted repository.
 _Avoid_: promotion
@@ -143,6 +147,7 @@ _Avoid_: merged config, final settings
 - A **Retained Workspace** exists only by explicit user or policy choice
 - **Promotion** applies a reviewed **Task Result** from a **Repository Workspace**
 - **Promotion** applies only to a **Repository Workspace**
+- A **Promotion Report** summarizes a **Task Result** before explicit **Promotion** but never gates or auto-applies it
 - **Export** moves a **Task Result** out of isobox-managed storage
 - A **Task** has exactly one **Effective Policy**
 - An **Effective Policy** is captured in the **Task Record**
