@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"isobox/internal/policy"
+	"isobox/internal/promotion"
 )
 
 func TestLoadRecordAcceptsValidV1TaskRecord(t *testing.T) {
@@ -163,6 +164,104 @@ func TestLoadRecordRejectsMissingRequiredFields(t *testing.T) {
 			_, err := loadRecord(dir)
 			if err == nil {
 				t.Fatalf("loadRecord accepted record: %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantFragment) {
+				t.Fatalf("error does not mention %q: %v", tc.wantFragment, err)
+			}
+		})
+	}
+}
+
+func TestLoadRecordAcceptsPromotionReport(t *testing.T) {
+	record := validTaskRecord()
+	record.PromotionReport = &promotion.Report{
+		SchemaVersion: promotion.ReportSchemaVersion,
+		ChangedFiles: []promotion.FileChange{
+			{Path: "scripts/build.sh", Status: "added", Categories: []string{promotion.CategoryScript}, AddedLines: 1},
+			{Path: "README.md", Status: "modified", AddedLines: 1, RemovedLines: 1},
+		},
+		HighRisk: []promotion.HighRisk{{Category: promotion.CategoryScript, Paths: []string{"scripts/build.sh"}}},
+	}
+	dir := writeRecordFixture(t, record)
+
+	loaded, err := loadRecord(dir)
+	if err != nil {
+		t.Fatalf("loadRecord rejected valid record with promotion_report: %v", err)
+	}
+	if loaded.PromotionReport == nil {
+		t.Fatal("promotion_report not loaded")
+	}
+	if loaded.PromotionReport.SchemaVersion != promotion.ReportSchemaVersion {
+		t.Fatalf("promotion_report schema_version = %q, want %q", loaded.PromotionReport.SchemaVersion, promotion.ReportSchemaVersion)
+	}
+	if len(loaded.PromotionReport.ChangedFiles) != 2 {
+		t.Fatalf("changed_files = %d, want 2", len(loaded.PromotionReport.ChangedFiles))
+	}
+}
+
+func TestLoadRecordRejectsPromotionReportWithMissingSchemaVersion(t *testing.T) {
+	record := validTaskRecord()
+	record.PromotionReport = &promotion.Report{
+		ChangedFiles: []promotion.FileChange{{Path: "README.md", Status: "modified"}},
+	}
+	dir := writeRecordFixture(t, record)
+
+	_, err := loadRecord(dir)
+	if err == nil {
+		t.Fatal("loadRecord accepted promotion_report missing schema_version")
+	}
+	if !strings.Contains(err.Error(), "promotion_report") || !strings.Contains(err.Error(), "schema_version") {
+		t.Fatalf("error does not mention promotion_report schema_version: %v", err)
+	}
+}
+
+func TestLoadRecordRejectsPromotionReportWithUnsupportedSchemaVersion(t *testing.T) {
+	record := validTaskRecord()
+	record.PromotionReport = &promotion.Report{
+		SchemaVersion: "v999",
+		ChangedFiles:  []promotion.FileChange{{Path: "README.md", Status: "modified"}},
+	}
+	dir := writeRecordFixture(t, record)
+
+	_, err := loadRecord(dir)
+	if err == nil {
+		t.Fatal("loadRecord accepted promotion_report with unsupported schema_version")
+	}
+	if !strings.Contains(err.Error(), "v999") || !strings.Contains(err.Error(), "promotion_report") {
+		t.Fatalf("error does not mention unsupported promotion_report schema_version: %v", err)
+	}
+}
+
+func TestLoadRecordRejectsPromotionReportWithInvalidFileChange(t *testing.T) {
+	cases := []struct {
+		name         string
+		mutate       func(*promotion.Report)
+		wantFragment string
+	}{
+		{
+			name:         "missing path",
+			mutate:       func(r *promotion.Report) { r.ChangedFiles = []promotion.FileChange{{Status: "modified"}} },
+			wantFragment: "missing path",
+		},
+		{
+			name: "unsupported status",
+			mutate: func(r *promotion.Report) {
+				r.ChangedFiles = []promotion.FileChange{{Path: "README.md", Status: "renamed"}}
+			},
+			wantFragment: "unsupported status",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			record := validTaskRecord()
+			record.PromotionReport = &promotion.Report{SchemaVersion: promotion.ReportSchemaVersion}
+			tc.mutate(record.PromotionReport)
+			dir := writeRecordFixture(t, record)
+
+			_, err := loadRecord(dir)
+			if err == nil {
+				t.Fatalf("loadRecord accepted promotion_report: %s", tc.name)
 			}
 			if !strings.Contains(err.Error(), tc.wantFragment) {
 				t.Fatalf("error does not mention %q: %v", tc.wantFragment, err)

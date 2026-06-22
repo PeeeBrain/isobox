@@ -213,6 +213,10 @@ The record contains:
   launch failure, Workload Command exit, and result-capture failure
 - stdout, stderr, and process exit status
 - the captured Git diff
+- the Promotion Report, a structured changed-file summary that flags
+  high-risk categories (scripts, hooks, dependency manifests, CI workflows,
+  large files, and binary-looking changes) so review can focus before
+  explicit Promotion
 
 The Effective Policy records both **intent** and **enforcement status**, so
 the record shows what was requested and whether the host Runtime Backend
@@ -242,6 +246,17 @@ trusted source repository
 If any check fails, the source repository is left unchanged and a clear error
 is reported.
 
+Before applying the diff, `isobox promote` prints the Promotion Report captured
+in the Task Record. The report lists changed files and any high-risk categories
+that apply, so review is focused at the moment of Promotion. The report is
+informational only: it never gates or auto-applies Promotion. The user remains
+the review gate by running `isobox promote` explicitly.
+
+The report is generated from the captured Git diff, so it reflects only what
+the diff exposes. New untracked files are not included in the current POC diff;
+high-risk detection for newly added files is therefore limited until the Task
+Result captures untracked changes.
+
 ## Development
 
 Run the integration tests:
@@ -265,6 +280,9 @@ repositories.
   Reuse Inputs are recorded in the Effective Policy, but the host Runtime
   Backend does not enforce them in this milestone
 - Repository Workspaces only; Directory Workspaces are not implemented
+- Promotion Report detection is limited to changes present in the captured
+  Git diff; new untracked files are not yet captured, so newly added
+  high-risk files may not appear in the report
 
 ## Project Documents
 
