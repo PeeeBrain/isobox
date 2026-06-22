@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"isobox/internal/policy"
@@ -61,6 +62,7 @@ type effectivePolicy struct {
 	ResourceEnforcement policy.ResourceEnforcement `json:"resource_enforcement"`
 	Network             policy.NetworkPolicy       `json:"network"`
 	NetworkEnforcement  policy.NetworkEnforcement  `json:"network_enforcement"`
+	ReuseInputs         []policy.ReuseInput        `json:"reuse_inputs"`
 	Limitations         []string                   `json:"limitations"`
 }
 
@@ -76,6 +78,7 @@ type runOptions struct {
 	records         string
 	retainWorkspace bool
 	command         []string
+	reuseInputs     []policy.ReuseInput
 }
 
 func main() {
@@ -123,6 +126,16 @@ func parseRun(args []string) (runOptions, error) {
 			opts.records = args[i]
 		case "--retain-workspace":
 			opts.retainWorkspace = true
+		case "--reuse-input":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("--reuse-input requires a kind=value declaration")
+			}
+			input, err := parseReuseInput(args[i])
+			if err != nil {
+				return opts, err
+			}
+			opts.reuseInputs = append(opts.reuseInputs, input)
 		case "--":
 			opts.command = args[i+1:]
 			i = len(args)
@@ -168,6 +181,17 @@ func runTask(opts runOptions) error {
 	sandboxPolicy := policy.SandboxPolicy{
 		ResourceLimits: policy.DefaultResourceLimits(),
 		Network:        policy.DefaultNetworkPolicy(),
+		ReuseInputs:    opts.reuseInputs,
+	}
+
+	resolvedReuseInputs, err := policy.ResolveReuseInputs(sandboxPolicy.ReuseInputs)
+	if err != nil {
+		return fmt.Errorf("resolve reuse inputs: %w", err)
+	}
+
+	limitations := backend.Limitations()
+	if len(resolvedReuseInputs) > 0 {
+		limitations = append(limitations, policy.ReuseInputsLimitation(resolvedReuseInputs))
 	}
 
 	record := taskRecord{
@@ -184,7 +208,8 @@ func runTask(opts runOptions) error {
 			ResourceEnforcement: backend.ResourceEnforcement(),
 			Network:             policy.ResolveNetworkPolicy(sandboxPolicy.Network),
 			NetworkEnforcement:  backend.NetworkEnforcement(),
-			Limitations:         backend.Limitations(),
+			ReuseInputs:         resolvedReuseInputs,
+			Limitations:         limitations,
 		},
 		Workspace: workspaceInfo{Retention: retention},
 	}
@@ -322,6 +347,20 @@ func reportWorkspace(ws workspaceInfo) {
 		return
 	}
 	fmt.Println("workspace disposed")
+}
+
+func parseReuseInput(spec string) (policy.ReuseInput, error) {
+	kind, value, found := strings.Cut(spec, "=")
+	if !found {
+		return policy.ReuseInput{}, fmt.Errorf("--reuse-input requires a kind=value declaration, got %q", spec)
+	}
+	if err := policy.ValidateReuseInputKind(kind); err != nil {
+		return policy.ReuseInput{}, err
+	}
+	if value == "" {
+		return policy.ReuseInput{}, fmt.Errorf("--reuse-input %q has empty value", kind)
+	}
+	return policy.ReuseInput{Kind: policy.ReuseInputKind(kind), Value: value}, nil
 }
 
 func newID() (string, error) {

@@ -83,6 +83,32 @@ contains the files exactly as the Workload Command left them. Retained
 Workspaces are a debugging aid; review should still be based on the captured
 Task Result.
 
+### Declare Reuse Inputs For Host Agent Reuse
+
+Host Agent Reuse exposes explicit host assets to a Sandbox so a Workload
+Command can reuse an existing Agent installation, configuration, or local
+integration. Reuse Inputs are always explicit; isobox never silently inherits
+broad host state.
+
+Declare each exposed asset with `--reuse-input kind=value`, repeating the flag
+for multiple inputs. Supported kinds are `host_binary`, `path`, `env_var`,
+`credential_ref`, and `local_integration`:
+
+```sh
+./bin/isobox run \
+  --source /path/to/repository \
+  --records /tmp/isobox-records \
+  --reuse-input host_binary=/usr/local/bin/codex \
+  --reuse-input path=/home/user/.codex \
+  --reuse-input local_integration=filesystem-mcp \
+  -- \
+  codex
+```
+
+Each declared Reuse Input is recorded in the Effective Policy so the Task
+Record makes Host Agent Reuse exposure visible. This POC declares and records
+Reuse Inputs only; it does not mount or broker the referenced host assets.
+
 ## Review A Task Result
 
 Each execution creates a directory such as:
@@ -102,7 +128,8 @@ The record contains:
 
 - the Task Record schema version
 - the Effective Policy, including the Workspace Source, Workload Command,
-  selected Runtime Backend, retention mode, and known backend limitations
+  selected Runtime Backend, retention mode, declared Reuse Inputs, and known
+  backend limitations
 - the Workspace source type (`repository`), source commit, retention state,
   and retained Workspace path, when requested
 - the Task Attempt Outcome, distinguishing success, preparation failure,
@@ -149,7 +176,7 @@ repositories.
 - Host Runtime Backend only; it does not provide strong isolation
 - No Dirty Source Snapshot support
 - No interactive review prompt
-- No explicit Reuse Input support
+- No explicit Reuse Input brokering; Reuse Inputs are declared and recorded only, not mounted
 - No network, credential, resource, or process policy enforcement
 - Repository Workspaces only; Directory Workspaces are not implemented
 

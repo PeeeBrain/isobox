@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"isobox/internal/policy"
 )
 
 const (
@@ -76,6 +78,21 @@ func validateEffectivePolicy(p effectivePolicy) error {
 	}
 	if p.RetentionDefault == "" {
 		return errors.New("effective_policy missing required field: retention_default")
+	}
+	if err := validateReuseInputs(p.ReuseInputs); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateReuseInputs(inputs []policy.ReuseInput) error {
+	for i, input := range inputs {
+		if err := policy.ValidateReuseInputKind(string(input.Kind)); err != nil {
+			return fmt.Errorf("effective_policy reuse_inputs[%d]: %w", i, err)
+		}
+		if input.Value == "" {
+			return fmt.Errorf("effective_policy reuse_inputs[%d] (%s): empty value", i, input.Kind)
+		}
 	}
 	return nil
 }

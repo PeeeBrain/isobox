@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"isobox/internal/policy"
 )
 
 func TestLoadRecordAcceptsValidV1TaskRecord(t *testing.T) {
@@ -135,6 +137,16 @@ func TestLoadRecordRejectsMissingRequiredFields(t *testing.T) {
 			name:         "unknown outcome type",
 			mutate:       func(r *taskRecord) { r.Outcome.Type = "catastrophic_failure" },
 			wantFragment: "outcome",
+		},
+		{
+			name:         "reuse input unknown kind",
+			mutate:       func(r *taskRecord) { r.EffectivePolicy.ReuseInputs = []policy.ReuseInput{{Kind: policy.ReuseInputKind("home_directory"), Value: "/home/user"}} },
+			wantFragment: "reuse_inputs",
+		},
+		{
+			name:         "reuse input empty value",
+			mutate:       func(r *taskRecord) { r.EffectivePolicy.ReuseInputs = []policy.ReuseInput{{Kind: policy.ReuseInputHostBinary, Value: ""}} },
+			wantFragment: "reuse_inputs",
 		},
 	}
 

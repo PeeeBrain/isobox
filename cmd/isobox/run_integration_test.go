@@ -935,6 +935,182 @@ func TestPromoteRejectsMissingSourceCommit(t *testing.T) {
 	}
 }
 
+func TestRunRecordsDeclaredReuseInputsInEffectivePolicy(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--reuse-input", "host_binary=/usr/local/bin/codex",
+		"--reuse-input", "path=/home/user/.codex",
+		"--reuse-input", "env_var=ANTHROPIC_API_KEY",
+		"--reuse-input", "credential_ref=keychain://anthropic",
+		"--reuse-input", "local_integration=filesystem-mcp",
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if len(record.EffectivePolicy.ReuseInputs) != 5 {
+		t.Fatalf("reuse_inputs = %d, want 5: %#v", len(record.EffectivePolicy.ReuseInputs), record.EffectivePolicy.ReuseInputs)
+	}
+
+	want := []struct {
+		kind, value string
+	}{
+		{"host_binary", "/usr/local/bin/codex"},
+		{"path", "/home/user/.codex"},
+		{"env_var", "ANTHROPIC_API_KEY"},
+		{"credential_ref", "keychain://anthropic"},
+		{"local_integration", "filesystem-mcp"},
+	}
+	for i, w := range want {
+		if record.EffectivePolicy.ReuseInputs[i].Kind != w.kind {
+			t.Fatalf("reuse_inputs[%d].kind = %q, want %q", i, record.EffectivePolicy.ReuseInputs[i].Kind, w.kind)
+		}
+		if record.EffectivePolicy.ReuseInputs[i].Value != w.value {
+			t.Fatalf("reuse_inputs[%d].value = %q, want %q", i, record.EffectivePolicy.ReuseInputs[i].Value, w.value)
+		}
+	}
+
+	var foundReuseLimitation bool
+	for _, l := range record.EffectivePolicy.Limitations {
+		if strings.Contains(l, "host-agent-reuse") && strings.Contains(l, "5 explicit Reuse Input") {
+			foundReuseLimitation = true
+			break
+		}
+	}
+	if !foundReuseLimitation {
+		t.Fatalf("limitations do not make Host Agent Reuse exposure visible: %#v", record.EffectivePolicy.Limitations)
+	}
+}
+
+func TestRunRecordsNoReuseInputsByDefaultWithoutBroadInheritance(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if len(record.EffectivePolicy.ReuseInputs) != 0 {
+		t.Fatalf("default reuse_inputs = %d, want 0 (no silent host inheritance): %#v", len(record.EffectivePolicy.ReuseInputs), record.EffectivePolicy.ReuseInputs)
+	}
+	for _, l := range record.EffectivePolicy.Limitations {
+		if strings.Contains(l, "host-agent-reuse") {
+			t.Fatalf("default limitations must not claim Host Agent Reuse exposure: %q", l)
+		}
+		if strings.Contains(l, "inherited") || strings.Contains(l, "inherit") {
+			t.Fatalf("default limitations must not imply broad host inheritance: %q", l)
+		}
+	}
+}
+
+func TestRunRejectsReuseInputWithUnknownKind(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--reuse-input", "home_directory=/home/user",
+		"--",
+		"sh", "-c", "true",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded for unsupported reuse input kind:\n%s", output)
+	}
+	if !strings.Contains(string(output), "unsupported reuse input kind") {
+		t.Fatalf("error does not reject unsupported reuse input kind:\n%s", output)
+	}
+
+	entries, err := os.ReadDir(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("task record written for rejected run: %d entries", len(entries))
+	}
+}
+
+func TestRunRejectsReuseInputMissingValue(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--reuse-input", "host_binary=",
+		"--",
+		"sh", "-c", "true",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded for empty reuse input value:\n%s", output)
+	}
+	if !strings.Contains(string(output), "empty value") {
+		t.Fatalf("error does not reject empty reuse input value:\n%s", output)
+	}
+}
+
+func TestRunRejectsReuseInputMissingEquals(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--reuse-input", "host_binary",
+		"--",
+		"sh", "-c", "true",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded for malformed reuse input:\n%s", output)
+	}
+	if !strings.Contains(string(output), "kind=value") {
+		t.Fatalf("error does not explain kind=value format:\n%s", output)
+	}
+}
+
 func headCommit(t *testing.T, dir string) string {
 	t.Helper()
 
@@ -1078,6 +1254,10 @@ type recordView struct {
 				Detail string `json:"detail"`
 			} `json:"rules"`
 		} `json:"network_enforcement"`
+		ReuseInputs []struct {
+			Kind  string `json:"kind"`
+			Value string `json:"value"`
+		} `json:"reuse_inputs"`
 		Limitations []string `json:"limitations"`
 	} `json:"effective_policy"`
 	Workspace struct {

@@ -6,10 +6,16 @@
 // stronger isolation than the selected Runtime Backend provides.
 package policy
 
+import "fmt"
+
 // SandboxPolicy describes the capabilities and limits requested for a Task.
 type SandboxPolicy struct {
 	ResourceLimits ResourceLimits
 	Network        NetworkPolicy
+	// ReuseInputs are the explicit host assets exposed to a Sandbox for Host
+	// Agent Reuse. A nil or empty slice means no host assets are exposed; the
+	// resolver never silently invents broad host inheritance.
+	ReuseInputs []ReuseInput
 }
 
 // ResourceLimits captures resource-limit intent for a Sandbox Policy.
@@ -25,6 +31,76 @@ type ResourceLimits struct {
 	MaxProcesses       int64 `json:"max_processes,omitempty"`
 	MaxDiskBytes       int64 `json:"max_disk_bytes,omitempty"`
 	MaxFileDescriptors int64 `json:"max_file_descriptors,omitempty"`
+}
+
+// ReuseInputKind identifies the category of a host asset exposed for Host
+// Agent Reuse.
+type ReuseInputKind string
+
+const (
+	// ReuseInputHostBinary is a host-installed executable exposed to a Sandbox.
+	ReuseInputHostBinary ReuseInputKind = "host_binary"
+	// ReuseInputPath is a host filesystem path exposed to a Sandbox.
+	ReuseInputPath ReuseInputKind = "path"
+	// ReuseInputEnvVar is a host environment variable exposed to a Sandbox.
+	ReuseInputEnvVar ReuseInputKind = "env_var"
+	// ReuseInputCredentialRef is a reference to a host credential exposed to a
+	// Sandbox. The reference itself is recorded, never the secret material.
+	ReuseInputCredentialRef ReuseInputKind = "credential_ref"
+	// ReuseInputLocalIntegration is a named local integration (for example an
+	// MCP server or skill) exposed to a Sandbox.
+	ReuseInputLocalIntegration ReuseInputKind = "local_integration"
+)
+
+var supportedReuseInputKinds = map[ReuseInputKind]struct{}{
+	ReuseInputHostBinary:       {},
+	ReuseInputPath:             {},
+	ReuseInputEnvVar:           {},
+	ReuseInputCredentialRef:    {},
+	ReuseInputLocalIntegration: {},
+}
+
+// ReuseInput is a single host asset explicitly exposed to a Sandbox for Host
+// Agent Reuse. Reuse Inputs are always explicit; isobox never silently
+// inherits broad host state.
+type ReuseInput struct {
+	Kind  ReuseInputKind `json:"kind"`
+	Value string         `json:"value"`
+}
+
+// ValidateReuseInputKind reports whether kind is a supported Reuse Input kind.
+func ValidateReuseInputKind(kind string) error {
+	if _, ok := supportedReuseInputKinds[ReuseInputKind(kind)]; !ok {
+		return fmt.Errorf("unsupported reuse input kind %q", kind)
+	}
+	return nil
+}
+
+// ResolveReuseInputs validates the requested Reuse Inputs and returns the
+// values recorded in the Effective Policy. Absence of requested Reuse Inputs
+// resolves to an empty slice; the resolver never silently broadens host
+// inheritance. Validation rejects unknown kinds or empty values so a Task
+// Record can never carry an ambiguous Reuse Input.
+func ResolveReuseInputs(requested []ReuseInput) ([]ReuseInput, error) {
+	resolved := make([]ReuseInput, 0, len(requested))
+	for i, input := range requested {
+		if _, ok := supportedReuseInputKinds[input.Kind]; !ok {
+			return nil, fmt.Errorf("reuse input %d has unsupported kind %q", i, input.Kind)
+		}
+		if input.Value == "" {
+			return nil, fmt.Errorf("reuse input %d (%s) has empty value", i, input.Kind)
+		}
+		resolved = append(resolved, input)
+	}
+	return resolved, nil
+}
+
+// ReuseInputsLimitation returns a human-readable statement suitable for the
+// Effective Policy limitations list when Reuse Inputs are configured. It makes
+// Host Agent Reuse exposure visible in the Task Record and records the lowered
+// isolation assurance that comes with reusing host assets.
+func ReuseInputsLimitation(inputs []ReuseInput) string {
+	return fmt.Sprintf("host-agent-reuse: Sandbox exposes %d explicit Reuse Input(s); Host Agent Reuse lowers isolation assurance compared with a more isolated Development Environment", len(inputs))
 }
 
 // DefaultResourceLimits returns the resolved default resource limits when a
