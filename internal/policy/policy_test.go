@@ -1,6 +1,7 @@
 package policy_test
 
 import (
+	"strings"
 	"testing"
 
 	"isobox/internal/policy"
@@ -170,5 +171,105 @@ func TestNetworkEnforcementLimitationStrings(t *testing.T) {
 	}
 	if limitations[0] != "host-process: network policy 'default_deny' is not_enforced; the host backend does not enforce the deny-by-default network policy" {
 		t.Fatalf("limitation = %q", limitations[0])
+	}
+}
+
+func TestValidateReuseInputKindAcceptsSupportedKinds(t *testing.T) {
+	kinds := []string{
+		string(policy.ReuseInputHostBinary),
+		string(policy.ReuseInputPath),
+		string(policy.ReuseInputEnvVar),
+		string(policy.ReuseInputCredentialRef),
+		string(policy.ReuseInputLocalIntegration),
+	}
+	for _, kind := range kinds {
+		if err := policy.ValidateReuseInputKind(kind); err != nil {
+			t.Fatalf("validate reuse input kind %q: %v", kind, err)
+		}
+	}
+}
+
+func TestValidateReuseInputKindRejectsUnknownKind(t *testing.T) {
+	if err := policy.ValidateReuseInputKind("home_directory"); err == nil {
+		t.Fatal("validate reuse input kind accepted broad implicit kind home_directory")
+	}
+	if err := policy.ValidateReuseInputKind(""); err == nil {
+		t.Fatal("validate reuse input kind accepted empty kind")
+	}
+}
+
+func TestResolveReuseInputsEmptyRecordsNoInheritance(t *testing.T) {
+	resolved, err := policy.ResolveReuseInputs(nil)
+	if err != nil {
+		t.Fatalf("resolve nil reuse inputs failed: %v", err)
+	}
+	if len(resolved) != 0 {
+		t.Fatalf("resolved nil reuse inputs = %+v, want empty (no silent host inheritance)", resolved)
+	}
+
+	resolved, err = policy.ResolveReuseInputs([]policy.ReuseInput{})
+	if err != nil {
+		t.Fatalf("resolve empty reuse inputs failed: %v", err)
+	}
+	if len(resolved) != 0 {
+		t.Fatalf("resolved empty reuse inputs = %+v, want empty", resolved)
+	}
+}
+
+func TestResolveReuseInputsPreservesExplicitDeclarations(t *testing.T) {
+	requested := []policy.ReuseInput{
+		{Kind: policy.ReuseInputHostBinary, Value: "/usr/local/bin/codex"},
+		{Kind: policy.ReuseInputPath, Value: "/home/user/.codex"},
+		{Kind: policy.ReuseInputEnvVar, Value: "ANTHROPIC_API_KEY"},
+		{Kind: policy.ReuseInputCredentialRef, Value: "keychain://anthropic"},
+		{Kind: policy.ReuseInputLocalIntegration, Value: "filesystem-mcp"},
+	}
+
+	resolved, err := policy.ResolveReuseInputs(requested)
+	if err != nil {
+		t.Fatalf("resolve reuse inputs failed: %v", err)
+	}
+	if len(resolved) != len(requested) {
+		t.Fatalf("resolved reuse inputs = %d, want %d", len(resolved), len(requested))
+	}
+	for i, input := range requested {
+		if resolved[i] != input {
+			t.Fatalf("resolved[%d] = %+v, want %+v", i, resolved[i], input)
+		}
+	}
+}
+
+func TestResolveReuseInputsRejectsUnknownKind(t *testing.T) {
+	_, err := policy.ResolveReuseInputs([]policy.ReuseInput{
+		{Kind: policy.ReuseInputKind("home_directory"), Value: "/home/user"},
+	})
+	if err == nil {
+		t.Fatal("resolve reuse inputs accepted an unsupported broad kind")
+	}
+}
+
+func TestResolveReuseInputsRejectsEmptyValue(t *testing.T) {
+	_, err := policy.ResolveReuseInputs([]policy.ReuseInput{
+		{Kind: policy.ReuseInputHostBinary, Value: ""},
+	})
+	if err == nil {
+		t.Fatal("resolve reuse inputs accepted an empty value")
+	}
+}
+
+func TestReuseInputsLimitationMentionsExposureAndLoweredAssurance(t *testing.T) {
+	inputs := []policy.ReuseInput{
+		{Kind: policy.ReuseInputHostBinary, Value: "/usr/local/bin/codex"},
+		{Kind: policy.ReuseInputPath, Value: "/home/user/.codex"},
+	}
+	limitation := policy.ReuseInputsLimitation(inputs)
+	if !strings.Contains(limitation, "host-agent-reuse") {
+		t.Fatalf("limitation does not mention host-agent-reuse: %q", limitation)
+	}
+	if !strings.Contains(limitation, "2 explicit Reuse Input") {
+		t.Fatalf("limitation does not mention reuse input count: %q", limitation)
+	}
+	if !strings.Contains(limitation, "lowers isolation assurance") {
+		t.Fatalf("limitation does not document lowered assurance: %q", limitation)
 	}
 }
