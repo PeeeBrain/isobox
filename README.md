@@ -1,8 +1,26 @@
 # isobox
 
-`isobox` is an early proof of concept for running coding-agent workloads in a
-private repository Workspace, capturing their result, and promoting reviewed
-changes back to the trusted source repository.
+`isobox` manages policy-bound execution of coding-agent work while keeping
+trusted host assets outside the execution boundary. It clones a Git repository
+into a disposable private Workspace, runs a Workload Command inside a Sandbox,
+captures the result as a durable Task Record, and promotes reviewed changes back
+to the trusted source repository.
+
+isobox is not a safer shell. It is a safety boundary for Agent autonomy: the
+product keeps a trusted repository out of an Agent's reach until a human has
+reviewed a captured Task Result and explicitly promoted it. The boundary is
+built from a policy-shaped workflow, durable audit records, and a review-gated
+Promotion boundary, rather than from any single runtime isolation guarantee.
+
+> [!IMPORTANT]
+> The current milestone ships only a **host Runtime Backend**. The host Runtime
+> Backend runs a Workload Command as a normal host process with the current
+> user's privileges, environment, and filesystem access. It does **not**
+> provide strong isolation, and isobox does not claim to. The host backend's
+> role is to route the existing execution behavior through the same Backend
+> contract that stronger Runtime Backends will use later. See
+> [Policy intent versus enforcement](#policy-intent-versus-enforcement) for what
+> is recorded today and what remains unenforced.
 
 The current implementation proves the basic product loop:
 
@@ -12,11 +30,67 @@ The current implementation proves the basic product loop:
 4. Store the result as a durable Task Record.
 5. Apply the reviewed diff back to the source repository on explicit promotion.
 
-> [!WARNING]
-> This POC does not provide a security sandbox yet. The Workload Command is a
-> normal host process and can access anything allowed by the current user. The
-> private Workspace prevents direct repository writes, but it is not an
-> isolation boundary.
+## How isobox works
+
+isobox models a single unit of work as a **Task**. A Task runs in a disposable
+**Sandbox** created by a **Runtime Backend**. The Sandbox holds exactly one
+**Workspace**: a private repository copy derived from a trusted **Workspace
+Source**, never the trusted source itself. A **Workload Command** runs from the
+root of the Workspace and is usually, but not always, a coding **Agent**.
+
+The boundary is policy-shaped, not just runtime-shaped:
+
+- **Sandbox Policy** describes the capabilities and limits requested for a
+  Task, such as resource limits, network intent, and explicit Reuse Inputs.
+- **Effective Policy** is the resolved policy actually used for a Task. It is
+  captured in the **Task Record** so every execution is auditable and never
+  implies stronger isolation than the selected Runtime Backend provides.
+
+Because the **Workspace** is disposable by default, the **Task Record** and
+captured **Task Result** outlive the Workspace. Review is based on the Task
+Result, not on a live Workspace. Only a reviewed Task Result from a
+**Repository Workspace** can be **Promoted** back into the trusted source
+repository.
+
+### Policy intent versus enforcement
+
+isobox records **policy intent** and reports **enforcement status**
+separately. The current host Runtime Backend is lower-assurance and does not
+enforce most of the recorded intent. The Task Record honestly records this gap
+so it never overstates containment.
+
+The Effective Policy captures the following intent and enforcement status:
+
+| Policy category | Recorded intent | Host Runtime Backend enforcement |
+| --- | --- | --- |
+| **Network** | deny-by-default with optional allow rules | **not enforced** — Workload Commands retain host network access |
+| **Resource limits** | resolved defaults (no explicit limit in this milestone) | **not enforced** — time, output size, CPU, memory, process, disk, and file descriptor limits are not enforced |
+| **Reuse Inputs** | explicit host assets exposed for Host Agent Reuse | **declared and recorded only** — referenced host assets are not mounted or brokered |
+
+In other words: in this milestone the host Runtime Backend records what *should*
+happen (the policy intent) and records that it *does not* enforce it yet.
+Stronger enforcement depends on future Runtime Backends. Until then, the safety
+boundary rests on the disposable Workspace, the durable Task Record, and the
+review-gated Promotion boundary — not on host-process containment.
+
+### Disposable Workspaces, Task Records, and Promotion
+
+- **Workspace**: the private repository copy where task work occurs. A
+  Workspace is derived from a trusted Workspace Source, never receives direct
+  access to that source, and is disposed after the Task Attempt by default. A
+  Workspace may be retained only by an explicit `--retain-workspace` choice.
+- **Task Record**: the durable audit and result history for a Task. It
+  outlives the Workspace and records the schema version, Effective Policy
+  (including declared Reuse Inputs and backend enforcement limitations), the
+  Workspace source type and commit, the Task Attempt Outcome, captured output,
+  and the Git diff.
+- **Task Result**: the captured reviewable output of a Task Attempt. Review is
+  based on the Task Result, not on a live Workspace, so disposable cleanup does
+  not lose what a reviewer needs.
+- **Promotion**: the review-gated movement of a Task Result from a Repository
+  Workspace into its trusted repository. Promotion applies only to a Repository
+  Workspace and only after a human has reviewed the Task Result. It is the
+  explicit step that moves reviewed output across the safety boundary.
 
 ## Requirements
 
@@ -107,11 +181,13 @@ for multiple inputs. Supported kinds are `host_binary`, `path`, `env_var`,
 
 Each declared Reuse Input is recorded in the Effective Policy so the Task
 Record makes Host Agent Reuse exposure visible. This POC declares and records
-Reuse Inputs only; it does not mount or broker the referenced host assets.
+Reuse Inputs only; it does not mount or broker the referenced host assets, and
+Host Agent Reuse lowers isolation assurance compared with a more isolated
+Development Environment.
 
 ## Review A Task Result
 
-Each execution creates a directory such as:
+Each execution creates a Task Record directory such as:
 
 ```text
 /tmp/isobox-records/task-0123456789abcdef/
@@ -128,8 +204,9 @@ The record contains:
 
 - the Task Record schema version
 - the Effective Policy, including the Workspace Source, Workload Command,
-  selected Runtime Backend, retention mode, declared Reuse Inputs, and known
-  backend limitations
+  selected Runtime Backend, retention mode, resource limits and their
+  enforcement status, network policy and its enforcement status, declared
+  Reuse Inputs, and known backend limitations
 - the Workspace source type (`repository`), source commit, retention state,
   and retained Workspace path, when requested
 - the Task Attempt Outcome, distinguishing success, preparation failure,
@@ -140,6 +217,11 @@ The record contains:
   high-risk categories (scripts, hooks, dependency manifests, CI workflows,
   large files, and binary-looking changes) so review can focus before
   explicit Promotion
+
+The Effective Policy records both **intent** and **enforcement status**, so
+the record shows what was requested and whether the host Runtime Backend
+enforced it. Where a category is `not_enforced`, the record says so explicitly
+rather than implying containment.
 
 ## Promote A Result
 
@@ -188,11 +270,15 @@ repositories.
 
 ## Current Limitations
 
-- Host Runtime Backend only; it does not provide strong isolation
+- Host Runtime Backend only; it does **not** provide strong isolation
 - No Dirty Source Snapshot support
 - No interactive review prompt
-- No explicit Reuse Input brokering; Reuse Inputs are declared and recorded only, not mounted
-- No network, credential, resource, or process policy enforcement
+- No explicit Reuse Input brokering; Reuse Inputs are declared and recorded
+  only, not mounted or brokered
+- No network, credential, resource, or process policy **enforcement** —
+  network intent (deny-by-default plus allow rules), resource limits, and
+  Reuse Inputs are recorded in the Effective Policy, but the host Runtime
+  Backend does not enforce them in this milestone
 - Repository Workspaces only; Directory Workspaces are not implemented
 - Promotion Report detection is limited to changes present in the captured
   Git diff; new untracked files are not yet captured, so newly added
