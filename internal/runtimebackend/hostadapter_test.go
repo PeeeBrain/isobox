@@ -142,3 +142,45 @@ func TestHostBackendReportsResourceLimitsNotEnforced(t *testing.T) {
 		}
 	}
 }
+
+func TestHostBackendReportsNetworkPolicyNotEnforced(t *testing.T) {
+	backend := runtimebackend.NewHost()
+	enforcement := backend.NetworkEnforcement()
+
+	if enforcement.RuntimeBackend != "host-process" {
+		t.Fatalf("enforcement runtime_backend = %q, want host-process", enforcement.RuntimeBackend)
+	}
+
+	wantAspects := map[string]policy.EnforcementStatus{
+		"default_deny": policy.NotEnforced,
+		"allow_rules":  policy.NotEnforced,
+	}
+
+	if len(enforcement.Rules) != len(wantAspects) {
+		t.Fatalf("enforcement rules = %d, want %d: %#v", len(enforcement.Rules), len(wantAspects), enforcement.Rules)
+	}
+
+	seen := make(map[string]bool)
+	for _, r := range enforcement.Rules {
+		want, ok := wantAspects[r.Aspect]
+		if !ok {
+			t.Fatalf("unexpected network policy aspect: %q", r.Aspect)
+		}
+		if r.Status != want {
+			t.Fatalf("%s status = %q, want %q", r.Aspect, r.Status, want)
+		}
+		if !strings.Contains(r.Detail, "does not enforce") {
+			t.Fatalf("%s detail does not state non-enforcement: %q", r.Aspect, r.Detail)
+		}
+		if !strings.Contains(r.Detail, "host network access") {
+			t.Fatalf("%s detail does not record that workloads retain host network access: %q", r.Aspect, r.Detail)
+		}
+		seen[r.Aspect] = true
+	}
+
+	for aspect := range wantAspects {
+		if !seen[aspect] {
+			t.Fatalf("missing network policy aspect: %q", aspect)
+		}
+	}
+}

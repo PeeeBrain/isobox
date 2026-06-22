@@ -28,6 +28,12 @@ type Backend interface {
 	// resource limits.
 	ResourceEnforcement() policy.ResourceEnforcement
 
+	// NetworkEnforcement returns a structured report describing how this
+	// backend enforces the network policy. This is recorded in the Effective
+	// Policy alongside the resolved network policy so the Task Record never
+	// implies stronger network isolation than the backend provides.
+	NetworkEnforcement() policy.NetworkEnforcement
+
 	// Run executes the requested command and returns its captured output and
 	// exit status. A non-zero exit status is returned in the result without an
 	// error; an error is returned only when the command could not be launched

@@ -540,6 +540,69 @@ func TestPromoteAppliesReviewedTaskResultToWorkspaceSource(t *testing.T) {
 	}
 }
 
+func TestRunRecordsDefaultDenyNetworkPolicyAndHostLimitations(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.EffectivePolicy.Network.Default != "deny" {
+		t.Fatalf("network policy default = %q, want deny", record.EffectivePolicy.Network.Default)
+	}
+	if len(record.EffectivePolicy.Network.Allow) != 0 {
+		t.Fatalf("network policy allow = %d rules, want 0", len(record.EffectivePolicy.Network.Allow))
+	}
+
+	if record.EffectivePolicy.NetworkEnforcement.RuntimeBackend != "host-process" {
+		t.Fatalf("network enforcement runtime_backend = %q, want host-process", record.EffectivePolicy.NetworkEnforcement.RuntimeBackend)
+	}
+	if len(record.EffectivePolicy.NetworkEnforcement.Rules) == 0 {
+		t.Fatal("network enforcement rules not recorded")
+	}
+
+	wantAspects := map[string]bool{"default_deny": false, "allow_rules": false}
+	for _, r := range record.EffectivePolicy.NetworkEnforcement.Rules {
+		matched, ok := wantAspects[r.Aspect]
+		if !ok {
+			t.Fatalf("unexpected network enforcement aspect: %q", r.Aspect)
+		}
+		if matched {
+			t.Fatalf("network enforcement aspect %q recorded more than once", r.Aspect)
+		}
+		wantAspects[r.Aspect] = true
+		if r.Status != "not_enforced" {
+			t.Fatalf("%s enforcement status = %q, want not_enforced", r.Aspect, r.Status)
+		}
+		if !strings.Contains(r.Detail, "does not enforce") {
+			t.Fatalf("%s enforcement detail does not document non-enforcement: %q", r.Aspect, r.Detail)
+		}
+		if !strings.Contains(r.Detail, "host network access") {
+			t.Fatalf("%s enforcement detail does not record that workloads retain host network access: %q", r.Aspect, r.Detail)
+		}
+	}
+	for aspect, seen := range wantAspects {
+		if !seen {
+			t.Fatalf("missing network enforcement aspect: %q", aspect)
+		}
+	}
+}
+
 func TestRunWritesSchemaVersionedTaskRecord(t *testing.T) {
 	source := initGitRepo(t)
 	records := t.TempDir()
@@ -999,6 +1062,22 @@ type recordView struct {
 				Detail string `json:"detail"`
 			} `json:"limits"`
 		} `json:"resource_enforcement"`
+		Network struct {
+			Default string `json:"default"`
+			Allow   []struct {
+				Origin     string `json:"origin"`
+				PathPrefix string `json:"path_prefix"`
+				Method     string `json:"method"`
+			} `json:"allow"`
+		} `json:"network"`
+		NetworkEnforcement struct {
+			RuntimeBackend string `json:"runtime_backend"`
+			Rules          []struct {
+				Aspect string `json:"aspect"`
+				Status string `json:"status"`
+				Detail string `json:"detail"`
+			} `json:"rules"`
+		} `json:"network_enforcement"`
 		Limitations []string `json:"limitations"`
 	} `json:"effective_policy"`
 	Workspace struct {
