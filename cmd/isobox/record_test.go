@@ -139,13 +139,17 @@ func TestLoadRecordRejectsMissingRequiredFields(t *testing.T) {
 			wantFragment: "outcome",
 		},
 		{
-			name:         "reuse input unknown kind",
-			mutate:       func(r *taskRecord) { r.EffectivePolicy.ReuseInputs = []policy.ReuseInput{{Kind: policy.ReuseInputKind("home_directory"), Value: "/home/user"}} },
+			name: "reuse input unknown kind",
+			mutate: func(r *taskRecord) {
+				r.EffectivePolicy.ReuseInputs = []policy.ReuseInput{{Kind: policy.ReuseInputKind("home_directory"), Value: "/home/user"}}
+			},
 			wantFragment: "reuse_inputs",
 		},
 		{
-			name:         "reuse input empty value",
-			mutate:       func(r *taskRecord) { r.EffectivePolicy.ReuseInputs = []policy.ReuseInput{{Kind: policy.ReuseInputHostBinary, Value: ""}} },
+			name: "reuse input empty value",
+			mutate: func(r *taskRecord) {
+				r.EffectivePolicy.ReuseInputs = []policy.ReuseInput{{Kind: policy.ReuseInputHostBinary, Value: ""}}
+			},
 			wantFragment: "reuse_inputs",
 		},
 	}
