@@ -59,6 +59,8 @@ type effectivePolicy struct {
 	RetentionDefault    string                     `json:"retention_default"`
 	ResourceLimits      policy.ResourceLimits      `json:"resource_limits"`
 	ResourceEnforcement policy.ResourceEnforcement `json:"resource_enforcement"`
+	Network             policy.NetworkPolicy       `json:"network"`
+	NetworkEnforcement  policy.NetworkEnforcement  `json:"network_enforcement"`
 	Limitations         []string                   `json:"limitations"`
 }
 
@@ -165,6 +167,7 @@ func runTask(opts runOptions) error {
 
 	sandboxPolicy := policy.SandboxPolicy{
 		ResourceLimits: policy.DefaultResourceLimits(),
+		Network:        policy.DefaultNetworkPolicy(),
 	}
 
 	record := taskRecord{
@@ -179,6 +182,8 @@ func runTask(opts runOptions) error {
 			RetentionDefault:    retention,
 			ResourceLimits:      policy.ResolveResourceLimits(sandboxPolicy.ResourceLimits),
 			ResourceEnforcement: backend.ResourceEnforcement(),
+			Network:             policy.ResolveNetworkPolicy(sandboxPolicy.Network),
+			NetworkEnforcement:  backend.NetworkEnforcement(),
 			Limitations:         backend.Limitations(),
 		},
 		Workspace: workspaceInfo{Retention: retention},

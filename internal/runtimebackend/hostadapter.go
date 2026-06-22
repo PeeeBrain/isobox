@@ -65,6 +65,29 @@ func (h *Host) ResourceEnforcement() policy.ResourceEnforcement {
 	}
 }
 
+// NetworkEnforcement reports that the host backend does not enforce the
+// network policy in this milestone. The default-deny intent and any allow
+// rules are recorded as not_enforced so the Task Record does not overstate
+// network containment. The host backend preserves the current user's
+// privileges, environment, and filesystem access, including network access.
+func (h *Host) NetworkEnforcement() policy.NetworkEnforcement {
+	return policy.NetworkEnforcement{
+		RuntimeBackend: h.Name(),
+		Rules: []policy.NetworkEnforcementRule{
+			{
+				Aspect: "default_deny",
+				Status: policy.NotEnforced,
+				Detail: "the host-process backend does not enforce the deny-by-default network policy in this milestone; workloads retain host network access",
+			},
+			{
+				Aspect: "allow_rules",
+				Status: policy.NotEnforced,
+				Detail: "the host-process backend does not enforce network allow rules in this milestone; workloads retain host network access",
+			},
+		},
+	}
+}
+
 // Run executes the requested command in the requested working directory,
 // capturing stdout, stderr, and the exit status. A non-zero exit status is
 // returned in RunResult without an error; an error is returned only when the
