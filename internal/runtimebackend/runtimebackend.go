@@ -43,9 +43,13 @@ type Backend interface {
 
 // RunRequest configures a single Workload Command execution.
 type RunRequest struct {
-	Workdir string
-	Command []string
-	Stdin   io.Reader
+	// WorkspaceRoot is the host path for the Workspace root. Backends that expose
+	// a stable internal Workspace path use this as the source for that mount.
+	// When empty, Workdir is treated as the Workspace root for compatibility.
+	WorkspaceRoot string
+	Workdir       string
+	Command       []string
+	Stdin         io.Reader
 }
 
 // RunResult captures the observable output of a Workload Command execution.

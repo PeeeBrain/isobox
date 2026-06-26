@@ -89,9 +89,28 @@ type runOptions struct {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		var exitErr commandExitError
+		if errors.As(err, &exitErr) {
+			if exitErr.err != nil {
+				fmt.Fprintln(os.Stderr, exitErr.err)
+			}
+			os.Exit(exitErr.code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+type commandExitError struct {
+	code int
+	err  error
+}
+
+func (e commandExitError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return fmt.Sprintf("workload command exited with status %d", e.code)
 }
 
 func run(args []string) error {

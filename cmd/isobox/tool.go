@@ -1,27 +1,121 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
 
+	"isobox/internal/policy"
 	"isobox/internal/preflight"
+	"isobox/internal/promotion"
+	"isobox/internal/runtimebackend"
+	"isobox/internal/workspace"
 )
 
 // toolCmd runs `isobox tool -- <command>` to enter a Tool-Call Sandbox.
-//
-// The first milestone implements the preflight boundary only: the command
-// runs the named preflight checks and refuses to create a Sandbox until
-// they all pass. Actual Workspace creation and Workload Command execution
-// arrive in later milestones.
 func toolCmd(args []string) error {
-	if _, err := parseToolCommand(args); err != nil {
+	cmd, err := parseToolCommand(args)
+	if err != nil {
 		return err
 	}
 
-	if err := preflight.Run("."); err != nil {
+	startDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	projectRoot, err := gitTopLevelForTool(startDir)
+	if err != nil {
+		return fmt.Errorf("isobox tool: locate project root: %w", err)
+	}
+
+	if err := preflight.Run(startDir); err != nil {
 		return err
 	}
 
-	return fmt.Errorf("isobox tool: tool-call execution is not implemented in this milestone")
+	ws, err := workspace.CreateRepository(projectRoot)
+	if err != nil {
+		return fmt.Errorf("create Repository Workspace: %w", err)
+	}
+	defer ws.Close()
+
+	rel, err := filepath.Rel(projectRoot, startDir)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return fmt.Errorf("isobox tool: current directory is outside project root")
+	}
+	workdir := filepath.Join(ws.Root(), rel)
+
+	backend := runtimebackend.NewBubblewrap()
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	record := taskRecord{
+		SchemaVersion: taskRecordSchemaVersion,
+		ID:            id,
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+		EffectivePolicy: effectivePolicy{
+			SchemaVersion:       "v1",
+			WorkspaceSource:     projectRoot,
+			WorkloadCommand:     cmd,
+			RuntimeBackend:      backend.Name(),
+			RetentionDefault:    "disposable",
+			ResourceLimits:      policy.ResolveResourceLimits(policy.DefaultResourceLimits()),
+			ResourceEnforcement: backend.ResourceEnforcement(),
+			Network:             policy.ResolveNetworkPolicy(policy.DefaultNetworkPolicy()),
+			NetworkEnforcement:  backend.NetworkEnforcement(),
+			Limitations:         backend.Limitations(),
+		},
+		Workspace: workspaceInfo{SourceType: "repository", SourceCommit: ws.SourceCommit(), Retention: "disposable"},
+	}
+
+	result, launchErr := backend.Run(context.Background(), runtimebackend.RunRequest{
+		WorkspaceRoot: ws.Root(),
+		Workdir:       workdir,
+		Command:       cmd,
+	})
+	fmt.Print(result.Stdout)
+	fmt.Fprint(os.Stderr, result.Stderr)
+	record.Result = taskResult{ExitStatus: result.ExitStatus, Stdout: result.Stdout, Stderr: result.Stderr}
+	if launchErr != nil {
+		record.Outcome = taskAttemptOutcome{Type: outcomeLaunchFailure, Error: launchErr.Error()}
+		_ = writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
+		return fmt.Errorf("launch workload command: %w", launchErr)
+	}
+	diff, err := ws.Diff()
+	if err != nil {
+		record.Outcome = taskAttemptOutcome{Type: outcomeResultCaptureFailure, Error: err.Error()}
+		_ = writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
+		return fmt.Errorf("capture task result diff: %w", err)
+	}
+	record.Result.Diff = diff
+	record.PromotionReport = promotion.GenerateReport(diff)
+	if result.ExitStatus != 0 {
+		record.Outcome = taskAttemptOutcome{Type: outcomeWorkloadCommandExit, ExitCode: result.ExitStatus}
+		if err := writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record); err != nil {
+			return err
+		}
+		return commandExitError{code: result.ExitStatus}
+	}
+	record.Outcome = taskAttemptOutcome{Type: outcomeSuccess}
+	return writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
+}
+
+func gitTopLevelForTool(dir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	root := strings.TrimSpace(string(out))
+	if root == "" {
+		return "", fmt.Errorf("not inside a Git repository")
+	}
+	return root, nil
 }
 
 // parseToolCommand extracts the Workload Command from `isobox tool -- <cmd>`.
