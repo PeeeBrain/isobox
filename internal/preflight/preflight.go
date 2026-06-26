@@ -35,11 +35,20 @@ func (f *Failure) Error() string { return f.Reason }
 var ErrProjectPolicyMissing = errors.New("project policy is required for cooperative tool calls")
 
 // Run executes the full preflight sequence for a cooperative tool call
-// rooted at the given directory. It returns the first failure encountered,
-// in the order: project policy exists, tool-call enabled, trusted
-// repository clean, bubblewrap available, and finally first-milestone
-// policy shape. The first failure wins so the user gets a single, focused
-// reason to fix.
+// rooted at the given directory. It returns the first failure encountered.
+// Checks run in this order so the user always sees the first reason to fix:
+//
+//  1. project policy exists at the Git repository root
+//  2. tool_call.enabled is true
+//  3. first-milestone policy shape is honored (runtime_backend, path_mode,
+//     workspace_source.kind, credentials.default, promotion.mode)
+//  4. trusted repository has no tracked modifications or untracked
+//     non-ignored files (no dirty-source override in the first milestone)
+//  5. bubblewrap (bwrap) is on PATH
+//
+// Validating the declarative policy before the runtime environment lets
+// policy-shape failures surface even on machines where bubblewrap is not
+// yet installed.
 func Run(dir string) error {
 	policy, err := projectpolicy.Load(dir)
 	if err != nil {
@@ -50,15 +59,15 @@ func Run(dir string) error {
 		return failuref("project policy disables tool-call (tool_call.enabled=false); set tool_call.enabled=true in %s to allow cooperative tool calls", projectPolicyPath(dir))
 	}
 
+	if err := assertFirstMilestonePolicyShape(policy); err != nil {
+		return err
+	}
+
 	if err := assertCleanTrustedRepo(dir); err != nil {
 		return failuref("%s; the first Tool-Call milestone has no dirty-source override, commit or stash the changes before invoking isobox tool", err.Error())
 	}
 
 	if err := assertBubblewrapAvailable(); err != nil {
-		return err
-	}
-
-	if err := assertFirstMilestonePolicyShape(policy); err != nil {
 		return err
 	}
 
