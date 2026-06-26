@@ -16,19 +16,22 @@ import (
 const isoboxTasksIgnoreEntry = ".isobox/tasks/"
 
 // initCmd runs `isobox init [path]` to create project-owned Tool-Call Sandbox
-// policy at <path>/.isobox/config.yaml. With no path it operates on the
-// current working directory.
+// policy at the Git repository root that contains the given directory. With
+// no path it operates on the current working directory; in every case the
+// policy is written at the Git root, never at the supplied subdirectory, so
+// `projectpolicy.Load` can always find it.
 func initCmd(args []string) error {
 	target, err := resolveInitTarget(args)
 	if err != nil {
 		return err
 	}
 
-	if !isInsideGitRepository(target) {
-		return fmt.Errorf("isobox init requires a Git repository at %s; the first Tool-Call Sandbox milestone uses the Git repository root as the Workspace Source", target)
+	repoRoot, err := gitTopLevel(target)
+	if err != nil {
+		return fmt.Errorf("isobox init requires a Git repository containing %s; the first Tool-Call Sandbox milestone uses the Git repository root as the Workspace Source", target)
 	}
 
-	configPath := filepath.Join(target, ".isobox", "config.yaml")
+	configPath := filepath.Join(repoRoot, ".isobox", "config.yaml")
 	if _, err := os.Stat(configPath); err == nil {
 		return fmt.Errorf("isobox init refused: project policy already exists at %s; remove it before re-initializing", configPath)
 	} else if !os.IsNotExist(err) {
@@ -48,7 +51,7 @@ func initCmd(args []string) error {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 
-	if err := ensureGitignoreEntry(filepath.Join(target, ".gitignore"), isoboxTasksIgnoreEntry); err != nil {
+	if err := ensureGitignoreEntry(filepath.Join(repoRoot, ".gitignore"), isoboxTasksIgnoreEntry); err != nil {
 		return err
 	}
 
@@ -89,9 +92,9 @@ func ensureGitignoreEntry(gitignorePath, entry string) error {
 	return writer.Flush()
 }
 
-// resolveInitTarget returns the directory `isobox init` should initialize.
-// A positional argument is used as the target; otherwise the current working
-// directory is used.
+// resolveInitTarget returns the directory `isobox init` should use to locate
+// the Git repository root. A positional argument is used as the target;
+// otherwise the current working directory is used.
 func resolveInitTarget(args []string) (string, error) {
 	switch len(args) {
 	case 0:
@@ -119,15 +122,20 @@ func resolveInitTarget(args []string) (string, error) {
 	}
 }
 
-// isInsideGitRepository reports whether the given directory is inside a Git
-// working tree, by asking Git for its own toplevel. A missing or non-Git
-// directory returns false.
-func isInsideGitRepository(dir string) bool {
+// gitTopLevel returns the absolute path of the Git repository containing the
+// given directory, or an error if the directory is not inside a working
+// tree. This is the same source of truth used by projectpolicy.Load so the
+// init write location and the discovery read location can never disagree.
+func gitTopLevel(dir string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = dir
 	output, err := cmd.Output()
 	if err != nil {
-		return false
+		return "", fmt.Errorf("git rev-parse --show-toplevel in %s: %w", dir, err)
 	}
-	return len(output) > 0
+	root := strings.TrimSpace(string(output))
+	if root == "" {
+		return "", fmt.Errorf("%s is not inside a Git repository", dir)
+	}
+	return root, nil
 }

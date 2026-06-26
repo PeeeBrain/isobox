@@ -69,6 +69,40 @@ func TestInitRejectsWhenProjectConfigAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestInitPlacesConfigAtGitRootWhenInvokedFromSubdirectory(t *testing.T) {
+	source := initGitRepo(t)
+	subdir := filepath.Join(source, "src", "pkg")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("create subdir: %v", err)
+	}
+
+	cmd := exec.Command("go", "run", ".", "init", subdir)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox init failed: %v\n%s", err, output)
+	}
+
+	rootConfig := filepath.Join(source, ".isobox", "config.yaml")
+	if _, err := os.Stat(rootConfig); err != nil {
+		t.Fatalf("isobox init did not create config at Git root %s: %v", rootConfig, err)
+	}
+
+	subdirConfig := filepath.Join(subdir, ".isobox", "config.yaml")
+	if _, err := os.Stat(subdirConfig); !os.IsNotExist(err) {
+		t.Fatalf("isobox init created config at subdir %s; the policy must live at the Git root: %v", subdirConfig, err)
+	}
+
+	rootGitignore := filepath.Join(source, ".gitignore")
+	contents, err := os.ReadFile(rootGitignore)
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(contents), ".isobox/tasks/") {
+		t.Fatalf(".gitignore at Git root missing .isobox/tasks/ entry: %q", contents)
+	}
+}
+
 func TestInitIgnoresIsoboxTasksDirectory(t *testing.T) {
 	source := initGitRepo(t)
 
