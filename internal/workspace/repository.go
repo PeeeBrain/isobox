@@ -58,9 +58,13 @@ func (w *RepositoryWorkspace) Root() string {
 	return filepath.Join(w.root, "workspace")
 }
 
-// Diff captures the current changes in the Repository Workspace as a reviewable
-// diff.
+// Diff captures the current tracked changes and reviewable untracked files in
+// the Repository Workspace as a reviewable diff.
 func (w *RepositoryWorkspace) Diff() (string, error) {
+	if err := w.markUntrackedForDiff(); err != nil {
+		return "", err
+	}
+
 	var buf bytes.Buffer
 	cmd := gitCommand(w.Root(), "diff", "--no-ext-diff")
 	cmd.Stdout = &buf
@@ -113,6 +117,29 @@ func assertClean(source string) error {
 	}
 	if len(status) != 0 {
 		return ErrDirtyWorkspaceSource
+	}
+	return nil
+}
+
+func (w *RepositoryWorkspace) markUntrackedForDiff() error {
+	out, err := gitCommand(w.Root(), "ls-files", "--others", "--exclude-standard", "-z").Output()
+	if err != nil {
+		return fmt.Errorf("list untracked Workspace files: %w", err)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	args := []string{"add", "-N", "--"}
+	for _, path := range bytes.Split(bytes.TrimRight(out, "\x00"), []byte{0}) {
+		if len(path) != 0 {
+			args = append(args, string(path))
+		}
+	}
+	if len(args) == 3 {
+		return nil
+	}
+	if err := gitCommand(w.Root(), args...).Run(); err != nil {
+		return fmt.Errorf("mark untracked Workspace files for diff: %w", err)
 	}
 	return nil
 }

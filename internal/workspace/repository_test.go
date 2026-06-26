@@ -91,6 +91,28 @@ func TestRepositoryWorkspaceIsolatesWritesFromSource(t *testing.T) {
 	}
 }
 
+func TestRepositoryWorkspaceDiffCapturesUntrackedFiles(t *testing.T) {
+	source := initGitRepo(t)
+
+	ws, err := workspace.CreateRepository(source)
+	if err != nil {
+		t.Fatalf("CreateRepository failed: %v", err)
+	}
+	defer ws.Close()
+
+	if err := os.WriteFile(filepath.Join(ws.Root(), "new.txt"), []byte("new content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := ws.Diff()
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	if !strings.Contains(diff, "diff --git a/new.txt b/new.txt") || !strings.Contains(diff, "+new content") {
+		t.Fatalf("diff does not describe untracked workspace file:\n%s", diff)
+	}
+}
+
 func TestRepositoryWorkspaceDiffCapturesChanges(t *testing.T) {
 	source := initGitRepo(t)
 

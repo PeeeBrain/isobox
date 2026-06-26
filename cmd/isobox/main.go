@@ -331,8 +331,8 @@ func promote(args []string) error {
 		return err
 	}
 
-	if record.Outcome.Type != outcomeSuccess {
-		return fmt.Errorf("cannot promote task %q: task outcome is %q, only successful tasks can be promoted", record.ID, record.Outcome.Type)
+	if record.Outcome.Type != outcomeSuccess && record.Outcome.Type != outcomeWorkloadCommandExit {
+		return fmt.Errorf("cannot promote task %q: task outcome is %q, only successful tasks or workload-command exits can be promoted", record.ID, record.Outcome.Type)
 	}
 
 	if record.Workspace.SourceType != "repository" {

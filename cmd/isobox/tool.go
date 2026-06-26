@@ -77,14 +77,14 @@ func toolCmd(args []string) error {
 		Workdir:       workdir,
 		Command:       cmd,
 	})
-	fmt.Print(result.Stdout)
-	fmt.Fprint(os.Stderr, result.Stderr)
-	record.Result = taskResult{ExitStatus: result.ExitStatus, Stdout: result.Stdout, Stderr: result.Stderr}
 	if launchErr != nil {
 		record.Outcome = taskAttemptOutcome{Type: outcomeLaunchFailure, Error: launchErr.Error()}
 		_ = writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
 		return fmt.Errorf("launch workload command: %w", launchErr)
 	}
+	fmt.Print(result.Stdout)
+	fmt.Fprint(os.Stderr, result.Stderr)
+	record.Result = taskResult{ExitStatus: result.ExitStatus, Stdout: result.Stdout, Stderr: result.Stderr}
 	diff, err := ws.Diff()
 	if err != nil {
 		record.Outcome = taskAttemptOutcome{Type: outcomeResultCaptureFailure, Error: err.Error()}

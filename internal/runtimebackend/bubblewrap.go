@@ -72,15 +72,19 @@ func (b *Bubblewrap) Run(ctx context.Context, req RunRequest) (RunResult, error)
 
 	args := []string{
 		"--die-with-parent",
+		"--unshare-pid",
+		"--clearenv",
 		"--dev", "/dev",
 		"--proc", "/proc",
 		"--tmpfs", "/tmp",
-		"--ro-bind", "/usr", "/usr",
-		"--ro-bind", "/bin", "/bin",
-		"--ro-bind", "/lib", "/lib",
-		"--ro-bind", "/lib64", "/lib64",
+		"--ro-bind-try", "/usr", "/usr",
+		"--ro-bind-try", "/bin", "/bin",
+		"--ro-bind-try", "/lib", "/lib",
+		"--ro-bind-try", "/lib64", "/lib64",
+		"--ro-bind-try", "/etc", "/etc",
 		"--bind", workspaceRoot, "/workspace",
 		"--setenv", "HOME", "/tmp",
+		"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"--chdir", internalWorkdir,
 		"--",
 	}
@@ -88,6 +92,7 @@ func (b *Bubblewrap) Run(ctx context.Context, req RunRequest) (RunResult, error)
 
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "bwrap", args...)
+	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 	cmd.Stdin = req.Stdin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -99,6 +104,9 @@ func (b *Bubblewrap) Run(ctx context.Context, req RunRequest) (RunResult, error)
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		result.ExitStatus = exitErr.ExitCode()
+		if strings.Contains(result.Stderr, "bwrap:") || strings.Contains(result.Stderr, "bubblewrap:") {
+			return result, fmt.Errorf("bubblewrap setup failed: %s", strings.TrimSpace(result.Stderr))
+		}
 		return result, nil
 	}
 	return result, err

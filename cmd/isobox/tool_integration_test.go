@@ -197,6 +197,23 @@ func TestToolPreservesRelativeWorkingDirectoryInBubblewrapWorkspace(t *testing.T
 	}
 }
 
+func TestToolDoesNotExposeCredentialEnvironment(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+
+	output := runToolFromDirWithEnv(t, source, []string{"GITHUB_TOKEN=super-secret"}, "sh", "-c", "printf '%s' \"${GITHUB_TOKEN-unset}:$PATH\"")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+	if strings.Contains(output.combined, "super-secret") {
+		t.Fatalf("sandbox exposed host credential environment:\n%s", output.combined)
+	}
+	if !strings.HasPrefix(output.combined, "unset:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") {
+		t.Fatalf("sandbox did not use backend-default environment:\n%s", output.combined)
+	}
+}
+
 func TestToolReturnsWrappedCommandExitCode(t *testing.T) {
 	skipIfBubblewrapUnavailable(t)
 	source := initGitRepo(t)
