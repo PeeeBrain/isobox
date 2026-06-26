@@ -13,14 +13,7 @@ built from a policy-shaped workflow, durable audit records, and a review-gated
 Promotion boundary, rather than from any single runtime isolation guarantee.
 
 > [!IMPORTANT]
-> The current milestone ships only a **host Runtime Backend**. The host Runtime
-> Backend runs a Workload Command as a normal host process with the current
-> user's privileges, environment, and filesystem access. It does **not**
-> provide strong isolation, and isobox does not claim to. The host backend's
-> role is to route the existing execution behavior through the same Backend
-> contract that stronger Runtime Backends will use later. See
-> [Policy intent versus enforcement](#policy-intent-versus-enforcement) for what
-> is recorded today and what remains unenforced.
+> The current milestone ships a **host Runtime Backend** and a filesystem-contained **bubblewrap Runtime Backend**. The host Runtime Backend runs a Workload Command as a normal host process with the current user's privileges, environment, and filesystem access; it does **not** provide strong isolation, and isobox does not claim to. The bubblewrap Runtime Backend provides filesystem containment for Cooperative Tool Calls but does **not** provide strong resource or network isolation. See [Policy intent versus enforcement](#policy-intent-versus-enforcement) for what is recorded today and what remains unenforced.
 
 The current implementation proves the basic product loop:
 
@@ -55,23 +48,17 @@ repository.
 ### Policy intent versus enforcement
 
 isobox records **policy intent** and reports **enforcement status**
-separately. The current host Runtime Backend is lower-assurance and does not
-enforce most of the recorded intent. The Task Record honestly records this gap
-so it never overstates containment.
+separately. Both the host Runtime Backend and the bubblewrap Runtime Backend are lower-assurance and do not enforce resource and network limits in this milestone. The Task Record honestly records this gap so it never overstates containment.
 
 The Effective Policy captures the following intent and enforcement status:
 
-| Policy category | Recorded intent | Host Runtime Backend enforcement |
-| --- | --- | --- |
-| **Network** | deny-by-default with optional allow rules | **not enforced** — Workload Commands retain host network access |
-| **Resource limits** | resolved defaults (no explicit limit in this milestone) | **not enforced** — time, output size, CPU, memory, process, disk, and file descriptor limits are not enforced |
-| **Reuse Inputs** | explicit host assets exposed for Host Agent Reuse | **declared and recorded only** — referenced host assets are not mounted or brokered |
+| Policy category | Recorded intent | Host Runtime Backend enforcement | Bubblewrap Runtime Backend enforcement |
+| --- | --- | --- | --- |
+| **Network** | deny-by-default with optional allow rules | **not enforced** — Workload Commands retain host network access | **not enforced** — Workload Commands retain host network access |
+| **Resource limits** | resolved defaults (no explicit limit in this milestone) | **not enforced** — time, output size, CPU, memory, process, disk, and file descriptor limits are not enforced | **not enforced** — time, output size, CPU, memory, process, disk, and file descriptor limits are not enforced |
+| **Reuse Inputs** | explicit host assets exposed for Host Agent Reuse | **declared and recorded only** — referenced host assets are not mounted or brokered | **not supported** — `isobox tool` does not support declaring Reuse Inputs |
 
-In other words: in this milestone the host Runtime Backend records what *should*
-happen (the policy intent) and records that it *does not* enforce it yet.
-Stronger enforcement depends on future Runtime Backends. Until then, the safety
-boundary rests on the disposable Workspace, the durable Task Record, and the
-review-gated Promotion boundary — not on host-process containment.
+In other words: the runtime backends record what *should* happen (the policy intent) and record that they are **not enforced** yet. Stronger enforcement depends on future Runtime Backends. Until then, the safety boundary rests on the disposable Workspace, the durable Task Record, the filesystem containment for Tool-Call Sandboxes, and the review-gated Promotion boundary — not on host-process or complete network containment.
 
 ### Disposable Workspaces, Task Records, and Promotion
 
@@ -185,6 +172,41 @@ Reuse Inputs only; it does not mount or broker the referenced host assets, and
 Host Agent Reuse lowers isolation assurance compared with a more isolated
 Development Environment.
 
+## Initialize A Project Policy
+
+To use the **Tool-Call Sandbox**, you must first initialize project policy in the Git repository root of your project:
+
+```sh
+./bin/isobox init
+```
+
+Or to initialize a specific directory's Git repository:
+
+```sh
+./bin/isobox init /path/to/project
+```
+
+This creates a restrictive default project policy at `.isobox/config.yaml` and adds `.isobox/tasks/` to `.gitignore`. You can edit `.isobox/config.yaml` by hand to adjust settings.
+
+## Run A Tool-Call Sandbox
+
+Once initialized, cooperative agents can run shell actions inside a filesystem-confined bubblewrap boundary using:
+
+```sh
+./bin/isobox tool -- sh -c 'printf "changed\n" > README.md'
+```
+
+Everything after `--` is the Workload Command. The command executes with a disposable copy of the workspace repository mounted at `/workspace` (with PID namespace isolated, env cleared except for a default `PATH` of `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, and chdirs to `/workspace`).
+
+Before the Sandbox is created, `isobox tool` runs **Preflight Rules** to verify:
+1. A project policy exists at the repository root.
+2. `tool_call.enabled` is `true` in `.isobox/config.yaml`.
+3. The policy shape matches the supported configuration (manual promotion, etc.).
+4. The trusted repository is clean (no uncommitted tracked or untracked changes).
+5. `bwrap` (bubblewrap) is installed on the host `PATH`.
+
+If any check fails, the preflight rejects the execution before launching any processes or creating the Sandbox. Task Records are saved in the project-owned task store under `.isobox/tasks/`.
+
 ## Review A Task Result
 
 Each execution creates a Task Record directory such as:
@@ -219,7 +241,7 @@ The record contains:
   explicit Promotion
 
 The Effective Policy records both **intent** and **enforcement status**, so
-the record shows what was requested and whether the host Runtime Backend
+the record shows what was requested and whether the selected Runtime Backend
 enforced it. Where a category is `not_enforced`, the record says so explicitly
 rather than implying containment.
 
@@ -270,15 +292,15 @@ repositories.
 
 ## Current Limitations
 
-- Host Runtime Backend only; it does **not** provide strong isolation
+- The host Runtime Backend does **not** provide strong isolation. The bubblewrap Runtime Backend provides filesystem containment but does not provide strong resource or network isolation.
 - No Dirty Source Snapshot support
 - No interactive review prompt
 - No explicit Reuse Input brokering; Reuse Inputs are declared and recorded
   only, not mounted or brokered
 - No network, credential, resource, or process policy **enforcement** —
   network intent (deny-by-default plus allow rules), resource limits, and
-  Reuse Inputs are recorded in the Effective Policy, but the host Runtime
-  Backend does not enforce them in this milestone
+  Reuse Inputs are recorded in the Effective Policy, but the Runtime Backends
+  do not enforce them in this milestone
 - Repository Workspaces only; Directory Workspaces are not implemented
 - Promotion Report detection is limited to changes present in the captured
   Git diff; new untracked files are not yet captured, so newly added
@@ -290,3 +312,4 @@ repositories.
 - [Domain language](CONTEXT.md)
 - [Daemonless MVP decision](docs/adr/0001-daemonless-mvp.md)
 - [Host Agent Reuse decision](docs/adr/0002-host-agent-reuse-for-developer-preview.md)
+- [Cooperative Tool Call Sandboxing decision](docs/adr/0003-cooperative-tool-call-sandboxing.md)
