@@ -96,10 +96,12 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: isobox <run|promote>")
+		return errors.New("usage: isobox <init|run|promote>")
 	}
 
 	switch args[0] {
+	case "init":
+		return initCmd(args[1:])
 	case "run":
 		opts, err := parseRun(args[1:])
 		if err != nil {
@@ -109,7 +111,7 @@ func run(args []string) error {
 	case "promote":
 		return promote(args[1:])
 	default:
-		return errors.New("usage: isobox <run|promote>")
+		return errors.New("usage: isobox <init|run|promote>")
 	}
 }
 
