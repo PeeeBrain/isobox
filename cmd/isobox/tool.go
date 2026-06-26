@@ -72,36 +72,42 @@ func toolCmd(args []string) error {
 		Workspace: workspaceInfo{SourceType: "repository", SourceCommit: ws.SourceCommit(), Retention: "disposable"},
 	}
 
+	fmt.Fprintf(os.Stderr, "isobox task %s: starting tool call\n", id)
 	result, launchErr := backend.Run(context.Background(), runtimebackend.RunRequest{
 		WorkspaceRoot: ws.Root(),
 		Workdir:       workdir,
 		Command:       cmd,
+		Stdout:        os.Stdout,
+		Stderr:        os.Stderr,
 	})
 	if launchErr != nil {
 		record.Outcome = taskAttemptOutcome{Type: outcomeLaunchFailure, Error: launchErr.Error()}
-		_ = writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
+		_ = writeArtifactBackedRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
 		return fmt.Errorf("launch workload command: %w", launchErr)
 	}
-	fmt.Print(result.Stdout)
-	fmt.Fprint(os.Stderr, result.Stderr)
 	record.Result = taskResult{ExitStatus: result.ExitStatus, Stdout: result.Stdout, Stderr: result.Stderr}
 	diff, err := ws.Diff()
 	if err != nil {
 		record.Outcome = taskAttemptOutcome{Type: outcomeResultCaptureFailure, Error: err.Error()}
-		_ = writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
+		_ = writeArtifactBackedRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
 		return fmt.Errorf("capture task result diff: %w", err)
 	}
 	record.Result.Diff = diff
 	record.PromotionReport = promotion.GenerateReport(diff)
 	if result.ExitStatus != 0 {
 		record.Outcome = taskAttemptOutcome{Type: outcomeWorkloadCommandExit, ExitCode: result.ExitStatus}
-		if err := writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record); err != nil {
+		if err := writeArtifactBackedRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record); err != nil {
 			return err
 		}
+		fmt.Fprintf(os.Stderr, "isobox task %s: completed outcome=%s exit_code=%d\n", id, record.Outcome.Type, result.ExitStatus)
 		return commandExitError{code: result.ExitStatus}
 	}
 	record.Outcome = taskAttemptOutcome{Type: outcomeSuccess}
-	return writeRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record)
+	if err := writeArtifactBackedRecord(filepath.Join(projectRoot, ".isobox", "tasks"), record); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "isobox task %s: completed outcome=%s\n", id, record.Outcome.Type)
+	return nil
 }
 
 func gitTopLevelForTool(dir string) (string, error) {

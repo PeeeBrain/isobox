@@ -73,10 +73,21 @@ type effectivePolicy struct {
 }
 
 type taskResult struct {
-	ExitStatus int    `json:"exit_status,omitempty"`
-	Stdout     string `json:"stdout"`
-	Stderr     string `json:"stderr"`
-	Diff       string `json:"diff"`
+	ExitStatus int           `json:"exit_status,omitempty"`
+	Stdout     string        `json:"stdout,omitempty"`
+	Stderr     string        `json:"stderr,omitempty"`
+	Diff       string        `json:"diff,omitempty"`
+	Artifacts  taskArtifacts `json:"artifacts,omitempty"`
+}
+
+type taskArtifacts struct {
+	Stdout artifactRef `json:"stdout,omitempty"`
+	Stderr artifactRef `json:"stderr,omitempty"`
+	Diff   artifactRef `json:"diff,omitempty"`
+}
+
+type artifactRef struct {
+	Path string `json:"path,omitempty"`
 }
 
 type runOptions struct {
@@ -315,6 +326,43 @@ func writeRecord(recordsDir string, record taskRecord) error {
 		return err
 	}
 	recordBytes, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(recordDir, "record.json"), append(recordBytes, '\n'), 0o644)
+}
+
+func writeArtifactBackedRecord(recordsDir string, record taskRecord) error {
+	recordDir := filepath.Join(recordsDir, record.ID)
+	artifactsDir := filepath.Join(recordDir, "artifacts")
+	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
+		return err
+	}
+
+	recordForJSON := record
+	if record.Result.Stdout != "" {
+		if err := os.WriteFile(filepath.Join(recordDir, "artifacts", "stdout.txt"), []byte(record.Result.Stdout), 0o644); err != nil {
+			return err
+		}
+		recordForJSON.Result.Artifacts.Stdout = artifactRef{Path: "artifacts/stdout.txt"}
+		recordForJSON.Result.Stdout = ""
+	}
+	if record.Result.Stderr != "" {
+		if err := os.WriteFile(filepath.Join(recordDir, "artifacts", "stderr.txt"), []byte(record.Result.Stderr), 0o644); err != nil {
+			return err
+		}
+		recordForJSON.Result.Artifacts.Stderr = artifactRef{Path: "artifacts/stderr.txt"}
+		recordForJSON.Result.Stderr = ""
+	}
+	if record.Result.Diff != "" {
+		if err := os.WriteFile(filepath.Join(recordDir, "artifacts", "diff.patch"), []byte(record.Result.Diff), 0o644); err != nil {
+			return err
+		}
+		recordForJSON.Result.Artifacts.Diff = artifactRef{Path: "artifacts/diff.patch"}
+		recordForJSON.Result.Diff = ""
+	}
+
+	recordBytes, err := json.MarshalIndent(recordForJSON, "", "  ")
 	if err != nil {
 		return err
 	}

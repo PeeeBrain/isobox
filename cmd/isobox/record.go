@@ -38,11 +38,40 @@ func loadRecord(recordDir string) (taskRecord, error) {
 		return record, fmt.Errorf("parse task record %s: %w", recordPath, err)
 	}
 
+	if err := hydrateTaskArtifacts(recordDir, &record); err != nil {
+		return record, fmt.Errorf("load task artifacts for %s: %w", recordPath, err)
+	}
+
 	if err := validateTaskRecord(record); err != nil {
 		return record, fmt.Errorf("validate task record %s: %w", recordPath, err)
 	}
 
 	return record, nil
+}
+
+func hydrateTaskArtifacts(recordDir string, record *taskRecord) error {
+	if record.Result.Artifacts.Stdout.Path != "" {
+		b, err := os.ReadFile(filepath.Join(recordDir, record.Result.Artifacts.Stdout.Path))
+		if err != nil {
+			return fmt.Errorf("read stdout artifact: %w", err)
+		}
+		record.Result.Stdout = string(b)
+	}
+	if record.Result.Artifacts.Stderr.Path != "" {
+		b, err := os.ReadFile(filepath.Join(recordDir, record.Result.Artifacts.Stderr.Path))
+		if err != nil {
+			return fmt.Errorf("read stderr artifact: %w", err)
+		}
+		record.Result.Stderr = string(b)
+	}
+	if record.Result.Artifacts.Diff.Path != "" {
+		b, err := os.ReadFile(filepath.Join(recordDir, record.Result.Artifacts.Diff.Path))
+		if err != nil {
+			return fmt.Errorf("read diff artifact: %w", err)
+		}
+		record.Result.Diff = string(b)
+	}
+	return nil
 }
 
 func validateTaskRecord(record taskRecord) error {

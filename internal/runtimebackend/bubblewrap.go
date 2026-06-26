@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -95,7 +96,13 @@ func (b *Bubblewrap) Run(ctx context.Context, req RunRequest) (RunResult, error)
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 	cmd.Stdin = req.Stdin
 	cmd.Stdout = &stdout
+	if req.Stdout != nil {
+		cmd.Stdout = io.MultiWriter(&stdout, req.Stdout)
+	}
 	cmd.Stderr = &stderr
+	if req.Stderr != nil {
+		cmd.Stderr = io.MultiWriter(&stderr, req.Stderr)
+	}
 	err = cmd.Run()
 	result := RunResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	if err == nil {

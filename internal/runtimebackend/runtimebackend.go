@@ -50,6 +50,8 @@ type RunRequest struct {
 	Workdir       string
 	Command       []string
 	Stdin         io.Reader
+	Stdout        io.Writer
+	Stderr        io.Writer
 }
 
 // RunResult captures the observable output of a Workload Command execution.
