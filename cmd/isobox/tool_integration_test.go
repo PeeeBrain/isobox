@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -174,6 +175,58 @@ func TestToolRunsCommandInBubblewrapWorkspace(t *testing.T) {
 	}
 }
 
+func TestToolCreatesArtifactBackedTaskRecord(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+
+	output := runToolFromDir(t, source, "sh", "-c", "printf out; printf err >&2; printf changed > README.md")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+	if output.stdout != "out" || !strings.Contains(output.stderr, "err") {
+		t.Fatalf("agent feedback stdout=%q stderr=%q, want live stdout/stderr", output.stdout, output.stderr)
+	}
+	if !strings.Contains(output.stderr, "starting tool call") || !strings.Contains(output.stderr, "completed outcome=success") {
+		t.Fatalf("stderr does not contain task metadata prelude and summary: %q", output.stderr)
+	}
+
+	taskDirs, err := filepath.Glob(filepath.Join(source, ".isobox", "tasks", "task-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(taskDirs) != 1 {
+		t.Fatalf("task records = %d, want 1 under project .isobox/tasks", len(taskDirs))
+	}
+
+	recordBytes, err := os.ReadFile(filepath.Join(taskDirs[0], "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(recordBytes, &record); err != nil {
+		t.Fatal(err)
+	}
+	result, ok := record["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("record result missing or wrong shape: %s", recordBytes)
+	}
+	for _, field := range []string{"stdout", "stderr", "diff"} {
+		if _, ok := result[field]; ok {
+			t.Fatalf("record.json contains inline result field %q instead of only artifact references:\n%s", field, recordBytes)
+		}
+	}
+	recordText := string(recordBytes)
+	for _, rel := range []string{"artifacts/stdout.txt", "artifacts/stderr.txt", "artifacts/diff.patch"} {
+		if _, err := os.Stat(filepath.Join(taskDirs[0], rel)); err != nil {
+			t.Fatalf("missing task artifact %s: %v", rel, err)
+		}
+		if !strings.Contains(recordText, rel) {
+			t.Fatalf("record.json does not reference artifact %s:\n%s", rel, recordText)
+		}
+	}
+}
+
 func TestToolPreservesRelativeWorkingDirectoryInBubblewrapWorkspace(t *testing.T) {
 	skipIfBubblewrapUnavailable(t)
 	source := initGitRepo(t)
@@ -192,8 +245,8 @@ func TestToolPreservesRelativeWorkingDirectoryInBubblewrapWorkspace(t *testing.T
 	if output.err != nil {
 		t.Fatalf("isobox tool failed:\n%s", output.combined)
 	}
-	if strings.TrimSpace(output.combined) != "/workspace/sub/dir" {
-		t.Fatalf("working directory = %q, want /workspace/sub/dir", strings.TrimSpace(output.combined))
+	if strings.TrimSpace(output.stdout) != "/workspace/sub/dir" {
+		t.Fatalf("working directory = %q, want /workspace/sub/dir", strings.TrimSpace(output.stdout))
 	}
 }
 
@@ -209,8 +262,8 @@ func TestToolDoesNotExposeCredentialEnvironment(t *testing.T) {
 	if strings.Contains(output.combined, "super-secret") {
 		t.Fatalf("sandbox exposed host credential environment:\n%s", output.combined)
 	}
-	if !strings.HasPrefix(output.combined, "unset:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") {
-		t.Fatalf("sandbox did not use backend-default environment:\n%s", output.combined)
+	if !strings.HasPrefix(output.stdout, "unset:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") {
+		t.Fatalf("sandbox did not use backend-default environment:\nstdout=%s\nstderr=%s", output.stdout, output.stderr)
 	}
 }
 
@@ -230,8 +283,8 @@ func TestToolReturnsWrappedCommandExitCode(t *testing.T) {
 	if exitErr.ExitCode() != 7 {
 		t.Fatalf("exit code = %d, want 7; output:\n%s", exitErr.ExitCode(), output.combined)
 	}
-	if output.combined != "out" {
-		t.Fatalf("stdout = %q, want out", output.combined)
+	if output.stdout != "out" {
+		t.Fatalf("stdout = %q, want out; stderr=%q", output.stdout, output.stderr)
 	}
 }
 
@@ -437,6 +490,8 @@ func boolString(b bool) string {
 
 type toolRunResult struct {
 	combined string
+	stdout   string
+	stderr   string
 	err      error
 }
 
@@ -466,8 +521,11 @@ func runToolFromDirWithEnv(t *testing.T, dir string, extraEnv []string, cmdArgs 
 	tool := exec.Command(binPath, append([]string{"tool", "--"}, cmdArgs...)...)
 	tool.Dir = dir
 	tool.Env = append(os.Environ(), extraEnv...)
-	combined, err := tool.CombinedOutput()
-	return toolRunResult{combined: string(combined), err: err}
+	var stdout, stderr strings.Builder
+	tool.Stdout = &stdout
+	tool.Stderr = &stderr
+	err := tool.Run()
+	return toolRunResult{combined: stdout.String() + stderr.String(), stdout: stdout.String(), stderr: stderr.String(), err: err}
 }
 
 func TestToolPreflightFailuresDoNotClaimWrappedCommandExecution(t *testing.T) {
