@@ -108,6 +108,8 @@ func run(args []string) error {
 			return err
 		}
 		return runTask(opts)
+	case "tool":
+		return toolCmd(args[1:])
 	case "promote":
 		return promote(args[1:])
 	default:
