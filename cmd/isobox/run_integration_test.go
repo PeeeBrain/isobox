@@ -818,25 +818,49 @@ func TestPromoteRejectsEmptyDiff(t *testing.T) {
 	}
 }
 
-func TestPromoteRejectsNonSuccessOutcome(t *testing.T) {
+func TestPromoteAllowsWorkloadCommandExitOutcome(t *testing.T) {
 	source := initGitRepo(t)
 	records := t.TempDir()
 	record := validPromotableRecord(t, source)
+	record["result"] = map[string]any{"diff": readmeChangedDiff()}
 	record["outcome"] = map[string]any{"type": "workload_command_exit", "exit_code": 7}
 	recordDir := writeRecordMap(t, records, "task-failed", record)
 
 	promote := exec.Command("go", "run", ".", "promote", recordDir)
 	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
 	output, err := promote.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox promote rejected workload_command_exit outcome:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "changed\n" {
+		t.Fatalf("Workspace Source was not promoted: %q", readme)
+	}
+}
+
+func TestPromoteRejectsPreparationFailureOutcome(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	record := validPromotableRecord(t, source)
+	record["outcome"] = map[string]any{"type": "preparation_failure", "error": "no workspace"}
+	recordDir := writeRecordMap(t, records, "task-failed", record)
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
 	if err == nil {
-		t.Fatalf("isobox promote succeeded for non-success outcome:\n%s", output)
+		t.Fatalf("isobox promote succeeded for preparation_failure outcome:\n%s", output)
 	}
 	out := string(output)
-	if !strings.Contains(out, "workload_command_exit") {
+	if !strings.Contains(out, "preparation_failure") {
 		t.Fatalf("error does not mention outcome type:\n%s", output)
 	}
-	if !strings.Contains(out, "only successful tasks can be promoted") {
-		t.Fatalf("error does not explain success requirement:\n%s", output)
+	if !strings.Contains(out, "only successful tasks or workload-command exits can be promoted") {
+		t.Fatalf("error does not explain promotion outcome requirement:\n%s", output)
 	}
 
 	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
@@ -1327,6 +1351,16 @@ func writePromotableRecord(t *testing.T, source, records, diff string) string {
 	record := validPromotableRecord(t, source)
 	record["result"] = map[string]any{"diff": diff}
 	return writeRecordMap(t, records, "task-promote", record)
+}
+
+func readmeChangedDiff() string {
+	return "diff --git a/README.md b/README.md\n" +
+		"index 3be9c81..5ea2ed4 100644\n" +
+		"--- a/README.md\n" +
+		"+++ b/README.md\n" +
+		"@@ -1 +1 @@\n" +
+		"-original\n" +
+		"+changed\n"
 }
 
 func writeRecordMap(t *testing.T, records, id string, record map[string]any) string {

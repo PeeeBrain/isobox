@@ -152,6 +152,96 @@ func TestToolRejectsToolCallWhenBubblewrapUnavailable(t *testing.T) {
 	}
 }
 
+func TestToolRunsCommandInBubblewrapWorkspace(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+
+	output := runToolFromDir(t, source, "sh", "-c", "printf sandbox > README.md; pwd")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+	if !strings.Contains(output.combined, "/workspace") {
+		t.Fatalf("wrapped command did not see stable /workspace path:\n%s", output.combined)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("trusted repository was modified by wrapped command: %q", readme)
+	}
+}
+
+func TestToolPreservesRelativeWorkingDirectoryInBubblewrapWorkspace(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+	nested := filepath.Join(source, "sub", "dir")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, ".keep"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runInDir(t, source, "git", "add", ".")
+	runInDir(t, source, "git", "commit", "-m", "add nested dir")
+
+	output := runToolFromDir(t, nested, "pwd")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+	if strings.TrimSpace(output.combined) != "/workspace/sub/dir" {
+		t.Fatalf("working directory = %q, want /workspace/sub/dir", strings.TrimSpace(output.combined))
+	}
+}
+
+func TestToolDoesNotExposeCredentialEnvironment(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+
+	output := runToolFromDirWithEnv(t, source, []string{"GITHUB_TOKEN=super-secret"}, "sh", "-c", "printf '%s' \"${GITHUB_TOKEN-unset}:$PATH\"")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+	if strings.Contains(output.combined, "super-secret") {
+		t.Fatalf("sandbox exposed host credential environment:\n%s", output.combined)
+	}
+	if !strings.HasPrefix(output.combined, "unset:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") {
+		t.Fatalf("sandbox did not use backend-default environment:\n%s", output.combined)
+	}
+}
+
+func TestToolReturnsWrappedCommandExitCode(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+
+	output := runToolFromDir(t, source, "sh", "-c", "printf out; exit 7")
+	if output.err == nil {
+		t.Fatalf("isobox tool unexpectedly succeeded:\n%s", output.combined)
+	}
+	exitErr, ok := output.err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("error = %T %v, want exec.ExitError", output.err, output.err)
+	}
+	if exitErr.ExitCode() != 7 {
+		t.Fatalf("exit code = %d, want 7; output:\n%s", exitErr.ExitCode(), output.combined)
+	}
+	if output.combined != "out" {
+		t.Fatalf("stdout = %q, want out", output.combined)
+	}
+}
+
+func skipIfBubblewrapUnavailable(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bubblewrap-dependent test skipped: bwrap not on PATH")
+	}
+}
+
 func TestToolRejectsToolCallWhenPolicyShapeIsUnsupportedInFirstMilestone(t *testing.T) {
 	cases := []struct {
 		name           string

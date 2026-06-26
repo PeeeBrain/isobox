@@ -89,9 +89,28 @@ type runOptions struct {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		var exitErr commandExitError
+		if errors.As(err, &exitErr) {
+			if exitErr.err != nil {
+				fmt.Fprintln(os.Stderr, exitErr.err)
+			}
+			os.Exit(exitErr.code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+type commandExitError struct {
+	code int
+	err  error
+}
+
+func (e commandExitError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return fmt.Sprintf("workload command exited with status %d", e.code)
 }
 
 func run(args []string) error {
@@ -312,8 +331,8 @@ func promote(args []string) error {
 		return err
 	}
 
-	if record.Outcome.Type != outcomeSuccess {
-		return fmt.Errorf("cannot promote task %q: task outcome is %q, only successful tasks can be promoted", record.ID, record.Outcome.Type)
+	if record.Outcome.Type != outcomeSuccess && record.Outcome.Type != outcomeWorkloadCommandExit {
+		return fmt.Errorf("cannot promote task %q: task outcome is %q, only successful tasks or workload-command exits can be promoted", record.ID, record.Outcome.Type)
 	}
 
 	if record.Workspace.SourceType != "repository" {
