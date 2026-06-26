@@ -255,15 +255,15 @@ func buildPathWithoutBwrap(t *testing.T) string {
 }
 
 type projectPolicyYAML struct {
-	toolCallEnabled   bool
-	runtimeBackend    string
-	pathMode          string
-	workspaceKind     string
-	networkDefault    string
-	filesystemExpose  bool
+	toolCallEnabled    bool
+	runtimeBackend     string
+	pathMode           string
+	workspaceKind      string
+	networkDefault     string
+	filesystemExpose   bool
 	credentialsDefault string
-	preflightRules    []string
-	promotionMode     string
+	preflightRules     []string
+	promotionMode      string
 }
 
 // writeProjectPolicy writes a hand-crafted project policy at the Git root
