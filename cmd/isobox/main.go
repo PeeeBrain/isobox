@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -28,6 +29,7 @@ type taskRecord struct {
 	Workspace       workspaceInfo      `json:"workspace"`
 	Result          taskResult         `json:"result"`
 	Outcome         taskAttemptOutcome `json:"outcome"`
+	Promotion       promotionState     `json:"promotion,omitempty"`
 	// PromotionReport is the initial Promotion Report generated from the
 	// Task Result diff. It is informational and never gates Promotion; it is
 	// captured here so review can focus on high-risk changes before explicit
@@ -81,13 +83,27 @@ type taskResult struct {
 }
 
 type taskArtifacts struct {
-	Stdout artifactRef `json:"stdout,omitempty"`
-	Stderr artifactRef `json:"stderr,omitempty"`
-	Diff   artifactRef `json:"diff,omitempty"`
+	Stdout         artifactRef             `json:"stdout,omitempty"`
+	Stderr         artifactRef             `json:"stderr,omitempty"`
+	Diff           artifactRef             `json:"diff,omitempty"`
+	UntrackedFiles []untrackedFileArtifact `json:"untracked_files,omitempty"`
 }
 
 type artifactRef struct {
 	Path string `json:"path,omitempty"`
+}
+
+type untrackedFileArtifact struct {
+	Path       string `json:"path"`
+	TargetPath string `json:"target_path"`
+}
+
+type promotionState struct {
+	Confirmation promotionConfirmation `json:"confirmation,omitempty"`
+}
+
+type promotionConfirmation struct {
+	Mode string `json:"mode,omitempty"`
 }
 
 type runOptions struct {
@@ -370,11 +386,12 @@ func writeArtifactBackedRecord(recordsDir string, record taskRecord) error {
 }
 
 func promote(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: isobox promote <task-record-dir>")
+	opts, err := parsePromote(args)
+	if err != nil {
+		return err
 	}
 
-	record, err := loadRecord(args[0])
+	record, err := loadRecord(opts.recordDir)
 	if err != nil {
 		return err
 	}
@@ -399,8 +416,8 @@ func promote(args []string) error {
 		return fmt.Errorf("cannot promote task %q: trusted repository has changed since the task was recorded", record.ID)
 	}
 
-	if record.Result.Diff == "" {
-		return fmt.Errorf("cannot promote task %q: task result has no diff to promote", record.ID)
+	if record.Result.Diff == "" && len(record.Result.Artifacts.UntrackedFiles) == 0 {
+		return fmt.Errorf("cannot promote task %q: task result has no changes to promote", record.ID)
 	}
 
 	// The Promotion Report is informational: it focuses review on high-risk
@@ -410,14 +427,125 @@ func promote(args []string) error {
 		fmt.Print(record.PromotionReport.Summarize())
 	}
 
-	cmd := command(record.EffectivePolicy.WorkspaceSource, "git", "apply", "--whitespace=nowarn")
-	cmd.Stdin = bytes.NewBufferString(record.Result.Diff)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("promote task %q: git apply failed: %w", record.ID, err)
+	if err := validateUntrackedFileArtifacts(opts.recordDir, record); err != nil {
+		return fmt.Errorf("cannot promote task %q: %w", record.ID, err)
+	}
+
+	confirmationMode := "interactive"
+	if opts.yes {
+		confirmationMode = "explicit_non_interactive"
+	} else if err := confirmPromotion(os.Stdin, os.Stdout); err != nil {
+		return fmt.Errorf("cannot promote task %q: %w", record.ID, err)
+	}
+
+	if record.Result.Diff != "" {
+		cmd := command(record.EffectivePolicy.WorkspaceSource, "git", "apply", "--whitespace=nowarn")
+		cmd.Stdin = bytes.NewBufferString(record.Result.Diff)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("promote task %q: git apply failed: %w", record.ID, err)
+		}
+	}
+	if err := promoteUntrackedFiles(opts.recordDir, record); err != nil {
+		return fmt.Errorf("promote task %q: %w", record.ID, err)
+	}
+
+	record.Promotion.Confirmation.Mode = confirmationMode
+	return writeArtifactBackedRecord(filepath.Dir(opts.recordDir), record)
+}
+
+type promoteOptions struct {
+	recordDir string
+	yes       bool
+}
+
+func parsePromote(args []string) (promoteOptions, error) {
+	var opts promoteOptions
+	for _, arg := range args {
+		switch arg {
+		case "--yes":
+			opts.yes = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return opts, fmt.Errorf("unknown argument: %s", arg)
+			}
+			if opts.recordDir != "" {
+				return opts, errors.New("usage: isobox promote [--yes] <task-record-dir>")
+			}
+			opts.recordDir = arg
+		}
+	}
+	if opts.recordDir == "" {
+		return opts, errors.New("usage: isobox promote [--yes] <task-record-dir>")
+	}
+	return opts, nil
+}
+
+func confirmPromotion(in *os.File, out *os.File) error {
+	fmt.Fprint(out, "Apply this Promotion to the trusted repository? Type 'yes' to continue: ")
+	answer, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && len(answer) == 0 {
+		return fmt.Errorf("confirmation failed: %w", err)
+	}
+	if strings.TrimSpace(answer) != "yes" {
+		return errors.New("promotion not confirmed")
 	}
 	return nil
+}
+
+func promoteUntrackedFiles(recordDir string, record taskRecord) error {
+	for _, file := range record.Result.Artifacts.UntrackedFiles {
+		src, err := safeArtifactPath(recordDir, file.Path)
+		if err != nil {
+			return err
+		}
+		dst, err := safeWorkspacePath(record.EffectivePolicy.WorkspaceSource, file.TargetPath)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		content, err := os.ReadFile(src)
+		if err != nil {
+			return fmt.Errorf("read untracked file artifact %q: %w", file.TargetPath, err)
+		}
+		if err := os.WriteFile(dst, content, 0o644); err != nil {
+			return fmt.Errorf("write untracked file %q: %w", file.TargetPath, err)
+		}
+	}
+	return nil
+}
+
+func validateUntrackedFileArtifacts(recordDir string, record taskRecord) error {
+	for _, file := range record.Result.Artifacts.UntrackedFiles {
+		src, err := safeArtifactPath(recordDir, file.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(src); err != nil {
+			return fmt.Errorf("inspect untracked file artifact %q: %w", file.TargetPath, err)
+		}
+		if _, err := safeWorkspacePath(record.EffectivePolicy.WorkspaceSource, file.TargetPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func safeArtifactPath(recordDir, rel string) (string, error) {
+	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "..") {
+		return "", fmt.Errorf("invalid untracked file artifact path %q", rel)
+	}
+	return filepath.Join(recordDir, rel), nil
+}
+
+func safeWorkspacePath(root, rel string) (string, error) {
+	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "..") {
+		return "", fmt.Errorf("invalid untracked file target path %q", rel)
+	}
+	return filepath.Join(root, rel), nil
 }
 
 func command(dir, name string, args ...string) *exec.Cmd {
