@@ -47,6 +47,12 @@ func (b *Bubblewrap) NetworkEnforcement() policy.NetworkEnforcement {
 	}}
 }
 
+func (b *Bubblewrap) CredentialEnforcement() policy.CredentialEnforcement {
+	return policy.CredentialEnforcement{RuntimeBackend: b.Name(), Rules: []policy.CredentialEnforcementRule{
+		{Aspect: "default_deny", Status: policy.Enforced, Detail: "environment is cleared before launching the workload; no credential material was exposed"},
+	}}
+}
+
 func (b *Bubblewrap) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if len(req.Command) == 0 {
 		return RunResult{}, errors.New("workload command is required")
@@ -84,10 +90,10 @@ func (b *Bubblewrap) Run(ctx context.Context, req RunRequest) (RunResult, error)
 		"--ro-bind-try", "/lib64", "/lib64",
 		"--ro-bind-try", "/etc", "/etc",
 		"--bind", workspaceRoot, "/workspace",
-		"--setenv", "HOME", "/tmp",
 		"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"--chdir", internalWorkdir,
 		"--",
+		"/usr/bin/env", "-u", "PWD",
 	}
 	args = append(args, req.Command...)
 

@@ -88,6 +88,19 @@ func (h *Host) NetworkEnforcement() policy.NetworkEnforcement {
 	}
 }
 
+func (h *Host) CredentialEnforcement() policy.CredentialEnforcement {
+	return policy.CredentialEnforcement{
+		RuntimeBackend: h.Name(),
+		Rules: []policy.CredentialEnforcementRule{
+			{
+				Aspect: "default_deny",
+				Status: policy.NotEnforced,
+				Detail: "the host-process backend inherits the host environment in this milestone; credential denial is not enforced",
+			},
+		},
+	}
+}
+
 // Run executes the requested command in the requested working directory,
 // capturing stdout, stderr, and the exit status. A non-zero exit status is
 // returned in RunResult without an error; an error is returned only when the

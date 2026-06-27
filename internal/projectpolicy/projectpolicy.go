@@ -70,7 +70,15 @@ type NetworkConfig struct {
 	// supports `deny` (deny-by-default, no allow rules) and `inherited`
 	// (use the runtime backend's ordinary network access). Host/domain
 	// allowlists are not supported.
-	Default string `yaml:"default"`
+	Default string               `yaml:"default"`
+	Allow   []NetworkAllowConfig `yaml:"allow"`
+}
+
+// NetworkAllowConfig captures unsupported first-milestone allowlist entries
+// so preflight can reject them with a truthful policy error.
+type NetworkAllowConfig struct {
+	Host   string `yaml:"host"`
+	Domain string `yaml:"domain"`
 }
 
 // FilesystemConfig describes the Filesystem Policy for cooperative tool calls.
