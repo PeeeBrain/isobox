@@ -578,6 +578,9 @@ func TestToolNetworkPolicyAcceptsDenyAndInheritedOnly(t *testing.T) {
 				}
 				return
 			}
+			if strings.Contains(output.combined, "bubblewrap (bwrap) is not on PATH") {
+				t.Skipf("bwrap unavailable; skipping supported network policy execution case: %s", output.combined)
+			}
 			if output.err != nil {
 				t.Fatalf("isobox tool rejected supported network policy:\n%s", output.combined)
 			}
