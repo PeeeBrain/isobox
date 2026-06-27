@@ -86,11 +86,38 @@ In other words: the runtime backends record what *should* happen (the policy int
 - Git
 - Linux or WSL2
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/PeeeBrain/isobox/main/install.sh | bash
+```
+
+The installer detects Linux `amd64` or `arm64`, downloads the matching asset
+from the latest GitHub Release, verifies `checksums.txt`, and installs the
+binary to `${HOME}/.local/bin` unless `INSTALL_DIR` is set.
+
 ## Build
 
 ```sh
 go build -o bin/isobox ./cmd/isobox
 ```
+
+Release builds are created by tagging a version:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow uses GoReleaser to publish Linux `amd64` and `arm64`
+archives plus `checksums.txt` to GitHub Releases.
+
+See [Releasing isobox](docs/releasing.md) for the release runbook. Creating or
+pushing release tags is a human-in-the-loop process and requires an explicit
+release request or human approval.
+
+Project changes are tracked in [CHANGELOG.md](CHANGELOG.md). Development
+workflow notes live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Run A Workload
 
@@ -356,4 +383,3 @@ run shell commands or test work in safe mode.
 - [Daemonless MVP decision](docs/adr/0001-daemonless-mvp.md)
 - [Host Agent Reuse decision](docs/adr/0002-host-agent-reuse-for-developer-preview.md)
 - [Cooperative Tool Call Sandboxing decision](docs/adr/0003-cooperative-tool-call-sandboxing.md)
-

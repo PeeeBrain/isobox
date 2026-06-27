@@ -21,6 +21,12 @@ import (
 	"isobox/internal/workspace"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 type taskRecord struct {
 	SchemaVersion   string             `json:"schema_version"`
 	ID              string             `json:"id"`
@@ -144,10 +150,13 @@ func (e commandExitError) Error() string {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: isobox <init|run|promote>")
+		return errors.New("usage: isobox <init|run|tool|promote|version>")
 	}
 
 	switch args[0] {
+	case "--help", "-h", "help":
+		fmt.Println("usage: isobox <init|run|tool|promote|version>")
+		return nil
 	case "init":
 		return initCmd(args[1:])
 	case "run":
@@ -160,8 +169,11 @@ func run(args []string) error {
 		return toolCmd(args[1:])
 	case "promote":
 		return promote(args[1:])
+	case "version":
+		fmt.Printf("isobox %s\ncommit: %s\ndate: %s\n", version, commit, date)
+		return nil
 	default:
-		return errors.New("usage: isobox <init|run|promote>")
+		return errors.New("usage: isobox <init|run|tool|promote|version>")
 	}
 }
 
