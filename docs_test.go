@@ -209,6 +209,36 @@ func TestReadmeDocumentsDirectShellEscapeBoundary(t *testing.T) {
 	}
 }
 
+func TestReadmeDocumentsToolCallMilestoneBehavior(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"Tool-Call Sandbox",
+		"isobox init",
+		"isobox tool --",
+		"Preflight Rules",
+		"bubblewrap",
+		"stores the Task Record in the project-owned Project Task Store under .isobox/tasks/",
+		"tracked changes and reviewable untracked files",
+		"explicit Promotion",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document Tool-Call Sandbox behavior: missing %q", phrase)
+		}
+	}
+
+	forbidden := []string{
+		"New untracked files are not included",
+		"new untracked files are not yet captured",
+	}
+	for _, phrase := range forbidden {
+		if strings.Contains(readme, phrase) {
+			t.Errorf("README still contradicts untracked result capture with %q", phrase)
+		}
+	}
+}
+
 // readReadme reads the README at the repository root.
 func readReadme(t *testing.T) string {
 	t.Helper()
