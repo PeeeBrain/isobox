@@ -262,32 +262,39 @@ rather than implying containment.
 
 ## Promote A Result
 
-After reviewing the Task Result, apply its diff to the trusted source
+After reviewing the Task Result, apply its changes to the trusted source
 repository:
 
 ```sh
 ./bin/isobox promote .isobox/tasks/task-0123456789abcdef
 ```
 
-Promotion is a review-gated movement from a Repository Workspace Task Result
-into the trusted source repository. It loads and validates the Task Record,
-then checks all of the following before applying the captured diff with
-`git apply`:
+To run promotion non-interactively (e.g., in automated script flows or CI tasks where approval has already been gathered), pass the `--yes` flag to bypass the interactive confirmation prompt:
 
-- the Task Attempt Outcome is `success`
+```sh
+./bin/isobox promote --yes .isobox/tasks/task-0123456789abcdef
+```
+
+Promotion is a review-gated movement from a Repository Workspace Task Result
+into the trusted repository. It loads and validates the Task Record,
+then checks all of the following before applying the captured changes:
+
+- the Task Attempt Outcome is `success` or `workload_command_exit`
 - the Workspace source type is `repository`
 - the recorded Workspace Source commit matches the current HEAD of the
-trusted source repository
-- the captured diff is non-empty
+  trusted source repository
+- the task result has changes to promote (a non-empty captured diff patch and/or captured untracked files)
 
 If any check fails, the source repository is left unchanged and a clear error
 is reported.
 
-Before applying the diff, `isobox promote` prints the Promotion Report captured
+Before applying the changes, `isobox promote` prints the Promotion Report captured
 in the Task Record. The report lists changed files and any high-risk categories
 that apply, so review is focused at the moment of Promotion. The report is
 informational only: it never gates or auto-applies Promotion. The user remains
 the review gate by running `isobox promote` explicitly.
+
+Upon human confirmation (or when `--yes` is specified), `isobox promote` applies the captured diff with `git apply --whitespace=nowarn` and copies any reviewable untracked files from the task result artifacts back into their target locations in the trusted source repository.
 
 The report is generated from the captured patch data, so it reflects what the
 Task Result exposes, including reviewable untracked files preserved in the
@@ -324,6 +331,24 @@ repositories.
 - Promotion Report detection is limited to changes present in the captured
   patch data
 
+## Agent Skill
+
+isobox ships an Agent Skill that teaches coding agents how to use `isobox tool`
+correctly — routing shell actions through the Tool-Call Sandbox, handling
+preflight failures, requesting human Promotion Approval, and managing Direct
+Shell Escapes.
+
+Install it into any project with:
+
+```sh
+npx skills add PeeeBrain/isobox
+```
+
+This installs the `isobox-agent-guide` skill into your project's `.agents/skills/`
+directory. Agents that support the Skills convention (Claude Code, Cursor, Codex,
+and others) will automatically discover and follow the skill when you ask them to
+run shell commands or test work in safe mode.
+
 ## Project Documents
 
 - [Product requirements](PRD.md)
@@ -331,3 +356,4 @@ repositories.
 - [Daemonless MVP decision](docs/adr/0001-daemonless-mvp.md)
 - [Host Agent Reuse decision](docs/adr/0002-host-agent-reuse-for-developer-preview.md)
 - [Cooperative Tool Call Sandboxing decision](docs/adr/0003-cooperative-tool-call-sandboxing.md)
+

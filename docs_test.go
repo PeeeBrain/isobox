@@ -109,7 +109,7 @@ func TestReadmeDocumentsHostAgentReuseExplicitInputs(t *testing.T) {
 }
 
 func TestCooperativeSafeModeSkillDocumentsSafetyRules(t *testing.T) {
-	skill := normalize(readFile(t, "skills/cooperative-safe-mode/SKILL.md"))
+	skill := normalize(readFile(t, "skills/isobox-agent-guide/SKILL.md"))
 
 	wantPhrases := []string{
 		"Cooperative Safe Mode",
@@ -136,7 +136,7 @@ func TestCooperativeSafeModeSkillDocumentsSafetyRules(t *testing.T) {
 }
 
 func TestCooperativeSafeModeSkillDoesNotOverclaimTrackingOrContainment(t *testing.T) {
-	skill := normalize(readFile(t, "skills/cooperative-safe-mode/SKILL.md"))
+	skill := normalize(readFile(t, "skills/isobox-agent-guide/SKILL.md"))
 
 	forbiddenPhrases := []string{
 		"isobox tracks all shell actions",

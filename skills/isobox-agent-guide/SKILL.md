@@ -1,6 +1,6 @@
 ---
-name: cooperative-safe-mode
-description: Route Agent shell actions through isobox Tool-Call Sandboxes by default, with explicit human approval gates for Promotion and direct shell escape.
+name: isobox-agent-guide
+description: Route Agent shell actions through isobox Tool-Call Sandboxes by default, with explicit human approval gates for Promotion and direct shell escape. Invoke this skill when the user asks to run bash or shell commands, test out work in safe mode, execute commands in a sandbox, or when the agent needs to run any shell action in a project that has isobox initialized.
 ---
 
 # Cooperative Safe Mode
@@ -12,6 +12,17 @@ Record and uses the configured Tool-Call Sandbox.
 
 This is cooperative behavior, not shell interception. isobox records and
 contains only shell actions that you actually invoke through isobox.
+
+## Prerequisites
+
+Before `isobox tool` can be used, the project must be initialized:
+
+1. Run `isobox init` in the project directory (or pass the project path) to
+   create `.isobox/config.yaml` with restrictive defaults.
+2. Commit the generated `.isobox/config.yaml` and `.gitignore` changes so the
+   trusted repository is clean before the first tool call.
+
+The tool-call workflow requires `bubblewrap` (`bwrap`) on the host `PATH`.
 
 ## Default Shell Routing
 
@@ -28,6 +39,42 @@ manager, Git-inspection, and repository-editing commands. The command after
 Do not silently fall back to a direct shell command when `isobox tool` fails
 preflight. Stop and report the exact reason instead.
 
+## Sandbox Environment
+
+The Workload Command executes inside a bubblewrap filesystem boundary with
+these properties:
+
+- The repository workspace is mounted at `/workspace`. The command's working
+  directory is `/workspace` (or a subdirectory matching the caller's relative
+  position within the project).
+- The environment is cleared. Only a default `PATH` of
+  `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` is set.
+  No host environment variables, credentials, or ambient state are inherited.
+- The workspace is always disposable. It is removed after the task completes.
+- Host paths outside the workspace (including the trusted repository, home
+  directory, and credential stores) are not exposed.
+
+## Exit Codes And Streaming
+
+`isobox tool` propagates the Workload Command's exit code. If the wrapped
+command exits with a non-zero status, `isobox tool` exits with the same code.
+
+Command stdout and stderr are streamed back to the caller live as Agent
+Feedback while also being captured for the Task Record. isobox emits its
+own task lifecycle messages on stderr (e.g., `isobox task <id>: starting
+tool call` and `isobox task <id>: completed outcome=success`).
+
+## Task Records
+
+Each `isobox tool` invocation creates an artifact-backed Task Record under
+`.isobox/tasks/task-<id>/` in the project. The record includes:
+
+- `record.json` with the Effective Policy, Workspace Source commit, outcome,
+  and Promotion Report
+- `artifacts/stdout.txt`, `artifacts/stderr.txt`, and `artifacts/diff.patch`
+
+The Task Record is the basis for review and Promotion.
+
 ## Preflight Failures
 
 If `isobox tool` reports any preflight failure, stop and report the exact
@@ -42,6 +89,18 @@ reason to the human before taking further shell action. Do this for:
 
 Do not retry the command directly unless the human gives fresh Direct Shell
 Escape approval after seeing the exact failure reason.
+
+### Commit Before Next Tool Call
+
+After promoting a Task Result, the trusted repository will have unstaged
+changes from the applied diff. You must commit (or stash) those changes
+before the next `isobox tool` call, because preflight rejects a dirty trusted
+repository. A typical post-promotion workflow is:
+
+```sh
+git add -A && git commit -m "<describe promoted changes>"
+isobox tool -- <next command>
+```
 
 ## Direct Shell Escape
 
