@@ -108,12 +108,64 @@ func TestReadmeDocumentsHostAgentReuseExplicitInputs(t *testing.T) {
 	}
 }
 
+func TestCooperativeSafeModeSkillDocumentsSafetyRules(t *testing.T) {
+	skill := normalize(readFile(t, "skills/cooperative-safe-mode/SKILL.md"))
+
+	wantPhrases := []string{
+		"Cooperative Safe Mode",
+		"route shell actions through isobox tool by default",
+		"Direct Shell Escape",
+		"fresh human approval",
+		"creates no isobox Task Record",
+		"does not make an isobox containment claim",
+		"Promotion Approval",
+		"isobox promote --yes",
+		"specific Task Result",
+		"Stop and report the exact reason",
+		"missing project policy",
+		"tool calls are disabled",
+		"dirty trusted repository",
+		"bubblewrap is missing",
+		"unsupported policy",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(skill, phrase) {
+			t.Errorf("Cooperative Safe Mode skill does not document %q", phrase)
+		}
+	}
+}
+
+func TestCooperativeSafeModeSkillDoesNotOverclaimTrackingOrContainment(t *testing.T) {
+	skill := normalize(readFile(t, "skills/cooperative-safe-mode/SKILL.md"))
+
+	forbiddenPhrases := []string{
+		"isobox tracks all shell actions",
+		"isobox tracks every shell action",
+		"isobox contains all shell actions",
+		"isobox contains every shell action",
+		"Direct Shell Escape creates an isobox Task Record",
+		"Direct Shell Escape is contained by isobox",
+		"direct shell calls are tracked by isobox",
+		"direct shell calls are contained by isobox",
+	}
+	for _, phrase := range forbiddenPhrases {
+		if strings.Contains(skill, phrase) {
+			t.Errorf("Cooperative Safe Mode skill overclaims tracking or containment with forbidden phrase %q", phrase)
+		}
+	}
+}
+
 // readReadme reads the README at the repository root.
 func readReadme(t *testing.T) string {
 	t.Helper()
-	bytes, err := os.ReadFile("README.md")
+	return readFile(t, "README.md")
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	bytes, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read README.md: %v", err)
+		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(bytes)
 }
