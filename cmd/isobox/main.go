@@ -61,17 +61,19 @@ const (
 )
 
 type effectivePolicy struct {
-	SchemaVersion       string                     `json:"schema_version"`
-	WorkspaceSource     string                     `json:"workspace_source"`
-	WorkloadCommand     []string                   `json:"workload_command"`
-	RuntimeBackend      string                     `json:"runtime_backend"`
-	RetentionDefault    string                     `json:"retention_default"`
-	ResourceLimits      policy.ResourceLimits      `json:"resource_limits"`
-	ResourceEnforcement policy.ResourceEnforcement `json:"resource_enforcement"`
-	Network             policy.NetworkPolicy       `json:"network"`
-	NetworkEnforcement  policy.NetworkEnforcement  `json:"network_enforcement"`
-	ReuseInputs         []policy.ReuseInput        `json:"reuse_inputs"`
-	Limitations         []string                   `json:"limitations"`
+	SchemaVersion         string                       `json:"schema_version"`
+	WorkspaceSource       string                       `json:"workspace_source"`
+	WorkloadCommand       []string                     `json:"workload_command"`
+	RuntimeBackend        string                       `json:"runtime_backend"`
+	RetentionDefault      string                       `json:"retention_default"`
+	ResourceLimits        policy.ResourceLimits        `json:"resource_limits"`
+	ResourceEnforcement   policy.ResourceEnforcement   `json:"resource_enforcement"`
+	Network               policy.NetworkPolicy         `json:"network"`
+	NetworkEnforcement    policy.NetworkEnforcement    `json:"network_enforcement"`
+	Credentials           policy.CredentialPolicy      `json:"credentials"`
+	CredentialEnforcement policy.CredentialEnforcement `json:"credential_enforcement"`
+	ReuseInputs           []policy.ReuseInput          `json:"reuse_inputs"`
+	Limitations           []string                     `json:"limitations"`
 }
 
 type taskResult struct {
@@ -237,6 +239,7 @@ func runTask(opts runOptions) error {
 	sandboxPolicy := policy.SandboxPolicy{
 		ResourceLimits: policy.DefaultResourceLimits(),
 		Network:        policy.DefaultNetworkPolicy(),
+		Credentials:    policy.DefaultCredentialPolicy(),
 		ReuseInputs:    opts.reuseInputs,
 	}
 
@@ -255,17 +258,19 @@ func runTask(opts runOptions) error {
 		ID:            id,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 		EffectivePolicy: effectivePolicy{
-			SchemaVersion:       "v1",
-			WorkspaceSource:     opts.source,
-			WorkloadCommand:     opts.command,
-			RuntimeBackend:      backend.Name(),
-			RetentionDefault:    retention,
-			ResourceLimits:      policy.ResolveResourceLimits(sandboxPolicy.ResourceLimits),
-			ResourceEnforcement: backend.ResourceEnforcement(),
-			Network:             policy.ResolveNetworkPolicy(sandboxPolicy.Network),
-			NetworkEnforcement:  backend.NetworkEnforcement(),
-			ReuseInputs:         resolvedReuseInputs,
-			Limitations:         limitations,
+			SchemaVersion:         "v1",
+			WorkspaceSource:       opts.source,
+			WorkloadCommand:       opts.command,
+			RuntimeBackend:        backend.Name(),
+			RetentionDefault:      retention,
+			ResourceLimits:        policy.ResolveResourceLimits(sandboxPolicy.ResourceLimits),
+			ResourceEnforcement:   backend.ResourceEnforcement(),
+			Network:               policy.ResolveNetworkPolicy(sandboxPolicy.Network),
+			NetworkEnforcement:    backend.NetworkEnforcement(),
+			Credentials:           policy.ResolveCredentialPolicy(sandboxPolicy.Credentials),
+			CredentialEnforcement: backend.CredentialEnforcement(),
+			ReuseInputs:           resolvedReuseInputs,
+			Limitations:           limitations,
 		},
 		Workspace: workspaceInfo{Retention: retention},
 	}

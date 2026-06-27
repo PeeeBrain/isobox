@@ -34,6 +34,10 @@ type Backend interface {
 	// implies stronger network isolation than the backend provides.
 	NetworkEnforcement() policy.NetworkEnforcement
 
+	// CredentialEnforcement returns a structured report describing how this
+	// backend enforces credential exposure policy.
+	CredentialEnforcement() policy.CredentialEnforcement
+
 	// Run executes the requested command and returns its captured output and
 	// exit status. A non-zero exit status is returned in the result without an
 	// error; an error is returned only when the command could not be launched

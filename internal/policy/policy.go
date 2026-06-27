@@ -12,10 +12,39 @@ import "fmt"
 type SandboxPolicy struct {
 	ResourceLimits ResourceLimits
 	Network        NetworkPolicy
+	Credentials    CredentialPolicy
 	// ReuseInputs are the explicit host assets exposed to a Sandbox for Host
 	// Agent Reuse. A nil or empty slice means no host assets are exposed; the
 	// resolver never silently invents broad host inheritance.
 	ReuseInputs []ReuseInput
+}
+
+// CredentialPolicy captures credential-access intent for a Sandbox Policy.
+//
+// The first milestone supports deny-only credential access. A zero value is
+// resolved to deny so callers do not accidentally inherit ambient credentials.
+type CredentialPolicy struct {
+	Default string `json:"default,omitempty"`
+}
+
+// CredentialDefaultDeny is the resolved credential action for the first
+// milestone: no credential material is exposed to the Sandbox.
+const CredentialDefaultDeny = "deny"
+
+// DefaultCredentialPolicy returns the resolved default credential policy.
+func DefaultCredentialPolicy() CredentialPolicy {
+	return CredentialPolicy{Default: CredentialDefaultDeny}
+}
+
+// ResolveCredentialPolicy merges requested credential policy with resolved
+// defaults. The first milestone only supplies deny, but this keeps the public
+// policy resolver shape aligned with other policy categories.
+func ResolveCredentialPolicy(requested CredentialPolicy) CredentialPolicy {
+	resolved := DefaultCredentialPolicy()
+	if requested.Default != "" {
+		resolved.Default = requested.Default
+	}
+	return resolved
 }
 
 // ResourceLimits captures resource-limit intent for a Sandbox Policy.
@@ -243,6 +272,32 @@ func (ne NetworkEnforcement) LimitationStrings() []string {
 	var out []string
 	for _, r := range ne.Rules {
 		out = append(out, ne.RuntimeBackend+": network policy '"+r.Aspect+"' is "+string(r.Status)+"; "+r.Detail)
+	}
+	return out
+}
+
+// CredentialEnforcementRule records the enforcement status for one aspect of
+// the credential policy.
+type CredentialEnforcementRule struct {
+	Aspect string            `json:"aspect"`
+	Status EnforcementStatus `json:"status"`
+	Detail string            `json:"detail,omitempty"`
+}
+
+// CredentialEnforcement records how a Runtime Backend enforces credential
+// exposure policy. This is recorded alongside the resolved credential policy
+// so the Task Record can say what was intended and what actually happened.
+type CredentialEnforcement struct {
+	RuntimeBackend string                      `json:"runtime_backend"`
+	Rules          []CredentialEnforcementRule `json:"rules"`
+}
+
+// LimitationStrings returns human-readable statements suitable for inclusion in
+// an Effective Policy limitations list.
+func (ce CredentialEnforcement) LimitationStrings() []string {
+	var out []string
+	for _, r := range ce.Rules {
+		out = append(out, ce.RuntimeBackend+": credential policy '"+r.Aspect+"' is "+string(r.Status)+"; "+r.Detail)
 	}
 	return out
 }

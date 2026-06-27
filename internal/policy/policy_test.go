@@ -174,6 +174,41 @@ func TestNetworkEnforcementLimitationStrings(t *testing.T) {
 	}
 }
 
+func TestDefaultCredentialPolicyDeniesCredentialExposure(t *testing.T) {
+	defaulted := policy.DefaultCredentialPolicy()
+	if defaulted.Default != policy.CredentialDefaultDeny {
+		t.Fatalf("default credential policy default = %q, want %q", defaulted.Default, policy.CredentialDefaultDeny)
+	}
+}
+
+func TestResolveCredentialPolicyAppliesDenyByDefault(t *testing.T) {
+	resolved := policy.ResolveCredentialPolicy(policy.CredentialPolicy{})
+	if resolved.Default != policy.CredentialDefaultDeny {
+		t.Fatalf("resolved credential default = %q, want %q", resolved.Default, policy.CredentialDefaultDeny)
+	}
+}
+
+func TestCredentialEnforcementLimitationStrings(t *testing.T) {
+	ce := policy.CredentialEnforcement{
+		RuntimeBackend: "bubblewrap",
+		Rules: []policy.CredentialEnforcementRule{
+			{
+				Aspect: "default_deny",
+				Status: policy.Enforced,
+				Detail: "no credential material was exposed",
+			},
+		},
+	}
+
+	limitations := ce.LimitationStrings()
+	if len(limitations) != 1 {
+		t.Fatalf("limitations = %d, want 1", len(limitations))
+	}
+	if limitations[0] != "bubblewrap: credential policy 'default_deny' is enforced; no credential material was exposed" {
+		t.Fatalf("limitation = %q", limitations[0])
+	}
+}
+
 func TestValidateReuseInputKindAcceptsSupportedKinds(t *testing.T) {
 	kinds := []string{
 		string(policy.ReuseInputHostBinary),
