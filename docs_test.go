@@ -155,6 +155,60 @@ func TestCooperativeSafeModeSkillDoesNotOverclaimTrackingOrContainment(t *testin
 	}
 }
 
+func TestReadmeDocumentsToolCallSandboxWorkflow(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"isobox init",
+		"isobox tool -- <command>",
+		"Cooperative Safe Mode",
+		"bubblewrap",
+		"host_process is insufficient for this workflow",
+		".isobox/tasks",
+		"Task Artifacts",
+		"stdout",
+		"stderr",
+		"patch data",
+		"untracked file",
+		"Agent Feedback",
+		"isobox promote .isobox/tasks/",
+		"ADR 0003",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document Tool-Call Sandbox workflow acceptance point %q", phrase)
+		}
+	}
+}
+
+func TestReadmeDocumentsDirectShellEscapeBoundary(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"Direct Shell Escape",
+		"creates no Task Record",
+		"receives no containment claim",
+		"conversation-level human approval",
+		"cooperative routing",
+		"enforced shell interception",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document the direct shell / cooperative boundary: missing %q", phrase)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"isobox intercepts direct shell calls",
+		"direct shell calls are contained by isobox",
+		"Cooperative Safe Mode enforces shell interception",
+	} {
+		if strings.Contains(readme, forbidden) {
+			t.Errorf("README overclaims shell interception with forbidden phrase %q", forbidden)
+		}
+	}
+}
+
 // readReadme reads the README at the repository root.
 func readReadme(t *testing.T) string {
 	t.Helper()
