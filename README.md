@@ -73,7 +73,8 @@ In other words: the runtime backends record what *should* happen (the policy int
   and the Git diff.
 - **Task Result**: the captured reviewable output of a Task Attempt. Review is
   based on the Task Result, not on a live Workspace, so disposable cleanup does
-  not lose what a reviewer needs.
+  not lose what a reviewer needs. Task Results include tracked changes and
+  reviewable untracked files.
 - **Promotion**: the review-gated movement of a Task Result from a Repository
   Workspace into its trusted repository. Promotion applies only to a Repository
   Workspace and only after a human has reviewed the Task Result. It is the
@@ -313,7 +314,6 @@ repositories.
 
 - The host Runtime Backend does **not** provide strong isolation. The bubblewrap Runtime Backend provides filesystem containment but does not provide strong resource or network isolation.
 - No Dirty Source Snapshot support
-- No interactive review prompt
 - No explicit Reuse Input brokering; Reuse Inputs are declared and recorded
   only, not mounted or brokered
 - No network, credential, resource, or process policy **enforcement** —

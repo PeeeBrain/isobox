@@ -233,6 +233,103 @@ func TestToolCreatesArtifactBackedTaskRecord(t *testing.T) {
 	}
 }
 
+func TestToolWorkflowFromInitCapturesAndPromotesTrackedAndUntrackedResults(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+
+	init := exec.Command("go", "run", ".", "init", source)
+	init.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	if output, err := init.CombinedOutput(); err != nil {
+		t.Fatalf("isobox init failed: %v\n%s", err, output)
+	}
+	runInDir(t, source, "git", "add", ".isobox", ".gitignore")
+	runInDir(t, source, "git", "commit", "-m", "initialize isobox policy")
+
+	output := runToolFromDir(t, source, "sh", "-c", "printf tracked > README.md; mkdir -p notes; printf untracked > notes/result.txt; printf agent-feedback; printf agent-note >&2")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+	if output.stdout != "agent-feedback" {
+		t.Fatalf("agent feedback stdout = %q, want wrapped command stdout", output.stdout)
+	}
+	if !strings.Contains(output.stderr, "agent-note") {
+		t.Fatalf("agent feedback stderr = %q, want wrapped command stderr", output.stderr)
+	}
+	if !strings.Contains(output.stderr, "starting tool call") || !strings.Contains(output.stderr, "completed outcome=success") {
+		t.Fatalf("agent feedback stderr does not include task lifecycle:\n%s", output.stderr)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("trusted repository changed before promotion: %q", readme)
+	}
+	if _, err := os.Stat(filepath.Join(source, "notes", "result.txt")); !os.IsNotExist(err) {
+		t.Fatalf("untracked task result leaked into trusted repository before promotion: %v", err)
+	}
+
+	taskDirs, err := filepath.Glob(filepath.Join(source, ".isobox", "tasks", "task-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(taskDirs) != 1 {
+		t.Fatalf("task records = %d, want 1 under project .isobox/tasks", len(taskDirs))
+	}
+	recordBytes, err := os.ReadFile(filepath.Join(taskDirs[0], "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordText := string(recordBytes)
+	for _, rel := range []string{"artifacts/stdout.txt", "artifacts/stderr.txt", "artifacts/diff.patch"} {
+		if _, err := os.Stat(filepath.Join(taskDirs[0], rel)); err != nil {
+			t.Fatalf("missing task artifact %s: %v", rel, err)
+		}
+		if !strings.Contains(recordText, rel) {
+			t.Fatalf("record.json does not reference artifact %s:\n%s", rel, recordText)
+		}
+	}
+	diffBytes, err := os.ReadFile(filepath.Join(taskDirs[0], "artifacts", "diff.patch"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := string(diffBytes)
+	for _, want := range []string{"README.md", "notes/result.txt", "+tracked", "+untracked"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("captured diff missing %q:\n%s", want, diff)
+		}
+	}
+
+	promote := exec.Command("go", "run", ".", "promote", "--yes", taskDirs[0])
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	if output, err := promote.CombinedOutput(); err != nil {
+		t.Fatalf("isobox promote failed: %v\n%s", err, output)
+	}
+
+	readme, err = os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "tracked" {
+		t.Fatalf("tracked result was not promoted: %q", readme)
+	}
+	result, err := os.ReadFile(filepath.Join(source, "notes", "result.txt"))
+	if err != nil {
+		t.Fatalf("untracked result was not promoted: %v", err)
+	}
+	if string(result) != "untracked" {
+		t.Fatalf("promoted untracked result = %q, want untracked", result)
+	}
+	promotedRecordBytes, err := os.ReadFile(filepath.Join(taskDirs[0], "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(promotedRecordBytes), `"mode": "explicit_non_interactive"`) {
+		t.Fatalf("promoted task record does not capture explicit non-interactive confirmation:\n%s", promotedRecordBytes)
+	}
+}
+
 func TestToolPreservesRelativeWorkingDirectoryInBubblewrapWorkspace(t *testing.T) {
 	skipIfBubblewrapUnavailable(t)
 	source := initGitRepo(t)
