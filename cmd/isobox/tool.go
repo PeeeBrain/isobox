@@ -11,6 +11,7 @@ import (
 
 	"isobox/internal/policy"
 	"isobox/internal/preflight"
+	"isobox/internal/projectpolicy"
 	"isobox/internal/promotion"
 	"isobox/internal/runtimebackend"
 	"isobox/internal/workspace"
@@ -35,6 +36,10 @@ func toolCmd(args []string) error {
 	if err := preflight.Run(startDir); err != nil {
 		return err
 	}
+	projectPolicy, err := projectpolicy.Load(startDir)
+	if err != nil {
+		return fmt.Errorf("isobox tool: load project policy: %w", err)
+	}
 
 	ws, err := workspace.CreateRepository(projectRoot)
 	if err != nil {
@@ -53,26 +58,44 @@ func toolCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	sandboxPolicy := policy.SandboxPolicy{
+		ResourceLimits: policy.DefaultResourceLimits(),
+		Network: policy.NetworkPolicy{
+			Default: projectPolicy.Network.Default,
+		},
+		Credentials: policy.CredentialPolicy{
+			Default: projectPolicy.Credentials.Default,
+		},
+	}
 	record := taskRecord{
 		SchemaVersion: taskRecordSchemaVersion,
 		ID:            id,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 		EffectivePolicy: effectivePolicy{
-			SchemaVersion:       "v1",
-			WorkspaceSource:     projectRoot,
-			WorkloadCommand:     cmd,
-			RuntimeBackend:      backend.Name(),
-			RetentionDefault:    "disposable",
-			ResourceLimits:      policy.ResolveResourceLimits(policy.DefaultResourceLimits()),
-			ResourceEnforcement: backend.ResourceEnforcement(),
-			Network:             policy.ResolveNetworkPolicy(policy.DefaultNetworkPolicy()),
-			NetworkEnforcement:  backend.NetworkEnforcement(),
-			Limitations:         backend.Limitations(),
+			SchemaVersion:         "v1",
+			WorkspaceSource:       projectRoot,
+			WorkloadCommand:       cmd,
+			RuntimeBackend:        backend.Name(),
+			RetentionDefault:      "disposable",
+			ResourceLimits:        policy.ResolveResourceLimits(sandboxPolicy.ResourceLimits),
+			ResourceEnforcement:   backend.ResourceEnforcement(),
+			Network:               policy.ResolveNetworkPolicy(sandboxPolicy.Network),
+			NetworkEnforcement:    backend.NetworkEnforcement(),
+			Credentials:           policy.ResolveCredentialPolicy(sandboxPolicy.Credentials),
+			CredentialEnforcement: backend.CredentialEnforcement(),
+			Limitations:           backend.Limitations(),
 		},
 		Workspace: workspaceInfo{SourceType: "repository", SourceCommit: ws.SourceCommit(), Retention: "disposable"},
 	}
 
 	fmt.Fprintf(os.Stderr, "isobox task %s: starting tool call\n", id)
+	fmt.Fprintf(os.Stderr, "isobox task %s: policy network=%s network_enforcement=%s credentials=%s credential_enforcement=%s\n",
+		id,
+		record.EffectivePolicy.Network.Default,
+		enforcementSummary(record.EffectivePolicy.NetworkEnforcement.Rules),
+		record.EffectivePolicy.Credentials.Default,
+		credentialEnforcementSummary(record.EffectivePolicy.CredentialEnforcement.Rules),
+	)
 	result, launchErr := backend.Run(context.Background(), runtimebackend.RunRequest{
 		WorkspaceRoot: ws.Root(),
 		Workdir:       workdir,
@@ -108,6 +131,44 @@ func toolCmd(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "isobox task %s: completed outcome=%s\n", id, record.Outcome.Type)
 	return nil
+}
+
+func enforcementSummary(rules []policy.NetworkEnforcementRule) policy.EnforcementStatus {
+	for _, rule := range rules {
+		if rule.Status == policy.NotEnforced {
+			return policy.NotEnforced
+		}
+	}
+	for _, rule := range rules {
+		if rule.Status == policy.PartiallyEnforced {
+			return policy.PartiallyEnforced
+		}
+	}
+	for _, rule := range rules {
+		if rule.Status == policy.Enforced {
+			return policy.Enforced
+		}
+	}
+	return policy.NotEnforced
+}
+
+func credentialEnforcementSummary(rules []policy.CredentialEnforcementRule) policy.EnforcementStatus {
+	for _, rule := range rules {
+		if rule.Status == policy.NotEnforced {
+			return policy.NotEnforced
+		}
+	}
+	for _, rule := range rules {
+		if rule.Status == policy.PartiallyEnforced {
+			return policy.PartiallyEnforced
+		}
+	}
+	for _, rule := range rules {
+		if rule.Status == policy.Enforced {
+			return policy.Enforced
+		}
+	}
+	return policy.NotEnforced
 }
 
 func gitTopLevelForTool(dir string) (string, error) {

@@ -190,6 +190,12 @@ func TestToolCreatesArtifactBackedTaskRecord(t *testing.T) {
 	if !strings.Contains(output.stderr, "starting tool call") || !strings.Contains(output.stderr, "completed outcome=success") {
 		t.Fatalf("stderr does not contain task metadata prelude and summary: %q", output.stderr)
 	}
+	if !strings.Contains(output.stderr, "policy network=deny") ||
+		!strings.Contains(output.stderr, "network_enforcement=not_enforced") ||
+		!strings.Contains(output.stderr, "credentials=deny") ||
+		!strings.Contains(output.stderr, "credential_enforcement=enforced") {
+		t.Fatalf("stderr does not report policy intent and backend enforcement status: %q", output.stderr)
+	}
 
 	taskDirs, err := filepath.Glob(filepath.Join(source, ".isobox", "tasks", "task-*"))
 	if err != nil {
@@ -224,6 +230,103 @@ func TestToolCreatesArtifactBackedTaskRecord(t *testing.T) {
 		if !strings.Contains(recordText, rel) {
 			t.Fatalf("record.json does not reference artifact %s:\n%s", rel, recordText)
 		}
+	}
+}
+
+func TestToolWorkflowFromInitCapturesAndPromotesTrackedAndUntrackedResults(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+
+	init := exec.Command("go", "run", ".", "init", source)
+	init.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	if output, err := init.CombinedOutput(); err != nil {
+		t.Fatalf("isobox init failed: %v\n%s", err, output)
+	}
+	runInDir(t, source, "git", "add", ".isobox", ".gitignore")
+	runInDir(t, source, "git", "commit", "-m", "initialize isobox policy")
+
+	output := runToolFromDir(t, source, "sh", "-c", "printf tracked > README.md; mkdir -p notes; printf untracked > notes/result.txt; printf agent-feedback; printf agent-note >&2")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+	if output.stdout != "agent-feedback" {
+		t.Fatalf("agent feedback stdout = %q, want wrapped command stdout", output.stdout)
+	}
+	if !strings.Contains(output.stderr, "agent-note") {
+		t.Fatalf("agent feedback stderr = %q, want wrapped command stderr", output.stderr)
+	}
+	if !strings.Contains(output.stderr, "starting tool call") || !strings.Contains(output.stderr, "completed outcome=success") {
+		t.Fatalf("agent feedback stderr does not include task lifecycle:\n%s", output.stderr)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("trusted repository changed before promotion: %q", readme)
+	}
+	if _, err := os.Stat(filepath.Join(source, "notes", "result.txt")); !os.IsNotExist(err) {
+		t.Fatalf("untracked task result leaked into trusted repository before promotion: %v", err)
+	}
+
+	taskDirs, err := filepath.Glob(filepath.Join(source, ".isobox", "tasks", "task-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(taskDirs) != 1 {
+		t.Fatalf("task records = %d, want 1 under project .isobox/tasks", len(taskDirs))
+	}
+	recordBytes, err := os.ReadFile(filepath.Join(taskDirs[0], "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordText := string(recordBytes)
+	for _, rel := range []string{"artifacts/stdout.txt", "artifacts/stderr.txt", "artifacts/diff.patch"} {
+		if _, err := os.Stat(filepath.Join(taskDirs[0], rel)); err != nil {
+			t.Fatalf("missing task artifact %s: %v", rel, err)
+		}
+		if !strings.Contains(recordText, rel) {
+			t.Fatalf("record.json does not reference artifact %s:\n%s", rel, recordText)
+		}
+	}
+	diffBytes, err := os.ReadFile(filepath.Join(taskDirs[0], "artifacts", "diff.patch"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := string(diffBytes)
+	for _, want := range []string{"README.md", "notes/result.txt", "+tracked", "+untracked"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("captured diff missing %q:\n%s", want, diff)
+		}
+	}
+
+	promote := exec.Command("go", "run", ".", "promote", "--yes", taskDirs[0])
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	if output, err := promote.CombinedOutput(); err != nil {
+		t.Fatalf("isobox promote failed: %v\n%s", err, output)
+	}
+
+	readme, err = os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "tracked" {
+		t.Fatalf("tracked result was not promoted: %q", readme)
+	}
+	result, err := os.ReadFile(filepath.Join(source, "notes", "result.txt"))
+	if err != nil {
+		t.Fatalf("untracked result was not promoted: %v", err)
+	}
+	if string(result) != "untracked" {
+		t.Fatalf("promoted untracked result = %q, want untracked", result)
+	}
+	promotedRecordBytes, err := os.ReadFile(filepath.Join(taskDirs[0], "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(promotedRecordBytes), `"mode": "explicit_non_interactive"`) {
+		t.Fatalf("promoted task record does not capture explicit non-interactive confirmation:\n%s", promotedRecordBytes)
 	}
 }
 
@@ -267,6 +370,48 @@ func TestToolDoesNotExposeCredentialEnvironment(t *testing.T) {
 	}
 }
 
+func TestToolCommandReceivesOnlyBackendDefaultPath(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+
+	output := runToolFromDirWithEnv(t, source, []string{
+		"ISOBOX_TEST_AMBIENT=ambient",
+		"HOME=/host/home",
+	}, "env")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+	if strings.TrimSpace(output.stdout) != "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" {
+		t.Fatalf("sandbox environment = %q, want only backend-default PATH", output.stdout)
+	}
+}
+
+func TestToolRecordsCredentialPolicyAndEnforcement(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+
+	output := runToolFromDirWithEnv(t, source, []string{"GITHUB_TOKEN=super-secret"}, "sh", "-c", "true")
+	if output.err != nil {
+		t.Fatalf("isobox tool failed:\n%s", output.combined)
+	}
+
+	recordText := readOnlyToolRecordText(t, source)
+	if !strings.Contains(recordText, `"credentials"`) || !strings.Contains(recordText, `"default": "deny"`) {
+		t.Fatalf("task record does not record credential deny intent:\n%s", recordText)
+	}
+	if !strings.Contains(recordText, `"credential_enforcement"`) || !strings.Contains(recordText, `"status": "enforced"`) {
+		t.Fatalf("task record does not record credential enforcement status:\n%s", recordText)
+	}
+	if !strings.Contains(recordText, "no credential material was exposed") {
+		t.Fatalf("task record does not state that no credentials were exposed:\n%s", recordText)
+	}
+	if strings.Contains(recordText, "super-secret") {
+		t.Fatalf("task record exposed credential material:\n%s", recordText)
+	}
+}
+
 func TestToolReturnsWrappedCommandExitCode(t *testing.T) {
 	skipIfBubblewrapUnavailable(t)
 	source := initGitRepo(t)
@@ -285,6 +430,30 @@ func TestToolReturnsWrappedCommandExitCode(t *testing.T) {
 	}
 	if output.stdout != "out" {
 		t.Fatalf("stdout = %q, want out; stderr=%q", output.stdout, output.stderr)
+	}
+}
+
+func TestToolSurfacesPrivateDependencyFailureAsCommandOutput(t *testing.T) {
+	skipIfBubblewrapUnavailable(t)
+	source := initGitRepo(t)
+	writeProjectPolicy(t, source, projectPolicyYAML{toolCallEnabled: true})
+
+	output := runToolFromDir(t, source, "sh", "-c", "printf 'fatal: could not read Username for private.example\\n' >&2; exit 128")
+	if output.err == nil {
+		t.Fatalf("isobox tool unexpectedly succeeded:\n%s", output.combined)
+	}
+	exitErr, ok := output.err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("error = %T %v, want exec.ExitError", output.err, output.err)
+	}
+	if exitErr.ExitCode() != 128 {
+		t.Fatalf("exit code = %d, want 128; output:\n%s", exitErr.ExitCode(), output.combined)
+	}
+	if !strings.Contains(output.stderr, "fatal: could not read Username for private.example") {
+		t.Fatalf("wrapped command stderr was not surfaced:\n%s", output.combined)
+	}
+	if strings.Contains(output.combined, "launch workload command") || strings.Contains(output.combined, "bubblewrap setup failed") {
+		t.Fatalf("private dependency failure was diagnosed as isobox infrastructure:\n%s", output.combined)
 	}
 }
 
@@ -367,6 +536,62 @@ func TestToolRejectsToolCallWhenPolicyShapeIsUnsupportedInFirstMilestone(t *test
 	}
 }
 
+func TestToolNetworkPolicyAcceptsDenyAndInheritedOnly(t *testing.T) {
+	cases := []struct {
+		name           string
+		networkDefault string
+		extraNetwork   []string
+		wantErr        bool
+	}{
+		{name: "deny", networkDefault: "deny"},
+		{name: "inherited", networkDefault: "inherited"},
+		{
+			name:           "host allowlist",
+			networkDefault: "deny",
+			extraNetwork:   []string{"  allow:", "    - host: github.com"},
+			wantErr:        true,
+		},
+		{
+			name:           "domain allowlist",
+			networkDefault: "deny",
+			extraNetwork:   []string{"  allow:", "    - domain: example.com"},
+			wantErr:        true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := initGitRepo(t)
+			writeProjectPolicy(t, source, projectPolicyYAML{
+				toolCallEnabled: true,
+				networkDefault:  tc.networkDefault,
+				extraNetwork:    tc.extraNetwork,
+			})
+
+			output := runToolFromDir(t, source, "sh", "-c", "true")
+			if tc.wantErr {
+				if output.err == nil {
+					t.Fatalf("isobox tool unexpectedly accepted unsupported network policy:\n%s", output.combined)
+				}
+				if !strings.Contains(output.combined, "network.allow") {
+					t.Fatalf("network allowlist rejection does not name network.allow:\n%s", output.combined)
+				}
+				return
+			}
+			if strings.Contains(output.combined, "bubblewrap (bwrap) is not on PATH") {
+				t.Skipf("bwrap unavailable; skipping supported network policy execution case: %s", output.combined)
+			}
+			if output.err != nil {
+				t.Fatalf("isobox tool rejected supported network policy:\n%s", output.combined)
+			}
+			recordText := readOnlyToolRecordText(t, source)
+			if !strings.Contains(recordText, `"network"`) || !strings.Contains(recordText, `"default": "`+tc.networkDefault+`"`) {
+				t.Fatalf("task record does not record network default %q:\n%s", tc.networkDefault, recordText)
+			}
+		})
+	}
+}
+
 // buildPathWithoutBwrap returns a PATH string that keeps `git` available so
 // project policy discovery works, but excludes `bwrap` regardless of the dev
 // machine. A throwaway directory containing only `git` is created and used
@@ -403,6 +628,7 @@ type projectPolicyYAML struct {
 	pathMode           string
 	workspaceKind      string
 	networkDefault     string
+	extraNetwork       []string
 	filesystemExpose   bool
 	credentialsDefault string
 	preflightRules     []string
@@ -459,6 +685,7 @@ func writeProjectPolicy(t *testing.T, source string, p projectPolicyYAML) {
 		"  kind: " + p.workspaceKind,
 		"network:",
 		"  default: " + p.networkDefault,
+		strings.Join(p.extraNetwork, "\n"),
 		"filesystem:",
 		"  expose_workspace: " + boolString(p.filesystemExpose),
 		"credentials:",
@@ -486,6 +713,30 @@ func boolString(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func readOnlyToolRecordText(t *testing.T, source string) string {
+	t.Helper()
+
+	taskRoot := filepath.Join(source, ".isobox", "tasks")
+	entries, err := os.ReadDir(taskRoot)
+	if err != nil {
+		t.Fatalf("read task root: %v", err)
+	}
+	var taskDirs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			taskDirs = append(taskDirs, entry.Name())
+		}
+	}
+	if len(taskDirs) != 1 {
+		t.Fatalf("task record dirs = %v, want exactly one", taskDirs)
+	}
+	recordBytes, err := os.ReadFile(filepath.Join(taskRoot, taskDirs[0], "record.json"))
+	if err != nil {
+		t.Fatalf("read record.json: %v", err)
+	}
+	return string(recordBytes)
 }
 
 type toolRunResult struct {

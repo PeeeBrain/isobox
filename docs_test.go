@@ -108,12 +108,148 @@ func TestReadmeDocumentsHostAgentReuseExplicitInputs(t *testing.T) {
 	}
 }
 
+func TestCooperativeSafeModeSkillDocumentsSafetyRules(t *testing.T) {
+	skill := normalize(readFile(t, "skills/cooperative-safe-mode/SKILL.md"))
+
+	wantPhrases := []string{
+		"Cooperative Safe Mode",
+		"route shell actions through isobox tool by default",
+		"Direct Shell Escape",
+		"fresh human approval",
+		"creates no isobox Task Record",
+		"does not make an isobox containment claim",
+		"Promotion Approval",
+		"isobox promote --yes",
+		"specific Task Result",
+		"Stop and report the exact reason",
+		"missing project policy",
+		"tool calls are disabled",
+		"dirty trusted repository",
+		"bubblewrap is missing",
+		"unsupported policy",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(skill, phrase) {
+			t.Errorf("Cooperative Safe Mode skill does not document %q", phrase)
+		}
+	}
+}
+
+func TestCooperativeSafeModeSkillDoesNotOverclaimTrackingOrContainment(t *testing.T) {
+	skill := normalize(readFile(t, "skills/cooperative-safe-mode/SKILL.md"))
+
+	forbiddenPhrases := []string{
+		"isobox tracks all shell actions",
+		"isobox tracks every shell action",
+		"isobox contains all shell actions",
+		"isobox contains every shell action",
+		"Direct Shell Escape creates an isobox Task Record",
+		"Direct Shell Escape is contained by isobox",
+		"direct shell calls are tracked by isobox",
+		"direct shell calls are contained by isobox",
+	}
+	for _, phrase := range forbiddenPhrases {
+		if strings.Contains(skill, phrase) {
+			t.Errorf("Cooperative Safe Mode skill overclaims tracking or containment with forbidden phrase %q", phrase)
+		}
+	}
+}
+
+func TestReadmeDocumentsToolCallSandboxWorkflow(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"isobox init",
+		"isobox tool -- <command>",
+		"Cooperative Safe Mode",
+		"bubblewrap",
+		"host_process is insufficient for this workflow",
+		".isobox/tasks",
+		"Task Artifacts",
+		"stdout",
+		"stderr",
+		"patch data",
+		"untracked file",
+		"Agent Feedback",
+		"isobox promote .isobox/tasks/",
+		"ADR 0003",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document Tool-Call Sandbox workflow acceptance point %q", phrase)
+		}
+	}
+}
+
+func TestReadmeDocumentsDirectShellEscapeBoundary(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"Direct Shell Escape",
+		"creates no Task Record",
+		"receives no containment claim",
+		"conversation-level human approval",
+		"cooperative routing",
+		"enforced shell interception",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document the direct shell / cooperative boundary: missing %q", phrase)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"isobox intercepts direct shell calls",
+		"direct shell calls are contained by isobox",
+		"Cooperative Safe Mode enforces shell interception",
+	} {
+		if strings.Contains(readme, forbidden) {
+			t.Errorf("README overclaims shell interception with forbidden phrase %q", forbidden)
+		}
+	}
+}
+
+func TestReadmeDocumentsToolCallMilestoneBehavior(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"Tool-Call Sandbox",
+		"isobox init",
+		"isobox tool --",
+		"Preflight Rules",
+		"bubblewrap",
+		"stores the Task Record in the project-owned Project Task Store under .isobox/tasks/",
+		"tracked changes and reviewable untracked files",
+		"explicit Promotion",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document Tool-Call Sandbox behavior: missing %q", phrase)
+		}
+	}
+
+	forbidden := []string{
+		"New untracked files are not included",
+		"new untracked files are not yet captured",
+	}
+	for _, phrase := range forbidden {
+		if strings.Contains(readme, phrase) {
+			t.Errorf("README still contradicts untracked result capture with %q", phrase)
+		}
+	}
+}
+
 // readReadme reads the README at the repository root.
 func readReadme(t *testing.T) string {
 	t.Helper()
-	bytes, err := os.ReadFile("README.md")
+	return readFile(t, "README.md")
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	bytes, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read README.md: %v", err)
+		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(bytes)
 }

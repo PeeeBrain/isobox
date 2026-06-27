@@ -136,6 +136,12 @@ func assertFirstMilestonePolicyShape(policy projectpolicy.ProjectPolicy) error {
 			return failuref("project policy %s=%q is not supported in the first Tool-Call milestone (only %s is supported); %s", c.field, c.got, c.want, c.suggested)
 		}
 	}
+	if policy.Network.Default != projectpolicy.NetworkDefaultDeny && policy.Network.Default != projectpolicy.NetworkDefaultInherited {
+		return failuref("project policy network.default=%q is not supported in the first Tool-Call milestone (only deny or inherited is supported); set network.default: deny or network.default: inherited in .isobox/config.yaml", policy.Network.Default)
+	}
+	if len(policy.Network.Allow) > 0 {
+		return failuref("project policy network.allow is not supported in the first Tool-Call milestone; host and domain allowlists are unavailable, use network.default: deny or network.default: inherited in .isobox/config.yaml")
+	}
 	return nil
 }
 

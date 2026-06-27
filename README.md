@@ -73,7 +73,8 @@ In other words: the runtime backends record what *should* happen (the policy int
   and the Git diff.
 - **Task Result**: the captured reviewable output of a Task Attempt. Review is
   based on the Task Result, not on a live Workspace, so disposable cleanup does
-  not lose what a reviewer needs.
+  not lose what a reviewer needs. Task Results include tracked changes and
+  reviewable untracked files.
 - **Promotion**: the review-gated movement of a Task Result from a Repository
   Workspace into its trusted repository. Promotion applies only to a Repository
   Workspace and only after a human has reviewed the Task Result. It is the
@@ -190,13 +191,21 @@ This creates a restrictive default project policy at `.isobox/config.yaml` and a
 
 ## Run A Tool-Call Sandbox
 
-Once initialized, cooperative agents can run shell actions inside a filesystem-confined bubblewrap boundary using:
+Once initialized, cooperative Agents can enter **Cooperative Safe Mode** by routing shell actions through the project-local Tool-Call Sandbox workflow. The command shape is:
+
+```sh
+./bin/isobox tool -- <command>
+```
+
+For example:
 
 ```sh
 ./bin/isobox tool -- sh -c 'printf "changed\n" > README.md'
 ```
 
 Everything after `--` is the Workload Command. The command executes with a disposable copy of the workspace repository mounted at `/workspace` (with PID namespace isolated, env cleared except for a default `PATH` of `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, and chdirs to `/workspace`).
+
+The first Tool-Call Sandbox milestone requires `bubblewrap` (`bwrap`) and a project policy with `runtime_backend: bubblewrap`. `host_process` is insufficient for this workflow because it runs as an ordinary host process and cannot provide the filesystem Containment Boundary required by ADR 0003.
 
 Before the Sandbox is created, `isobox tool` runs **Preflight Rules** to verify:
 1. A project policy exists at the repository root.
@@ -205,24 +214,30 @@ Before the Sandbox is created, `isobox tool` runs **Preflight Rules** to verify:
 4. The trusted repository is clean (no uncommitted tracked or untracked changes).
 5. `bwrap` (bubblewrap) is installed on the host `PATH`.
 
-If any check fails, the preflight rejects the execution before launching any processes or creating the Sandbox. Task Records are saved in the project-owned task store under `.isobox/tasks/`.
+If any check fails, the preflight rejects the execution before launching any processes or creating the Sandbox. The command exits with an `isobox tool preflight` error and does not create a Task Record.
+
+Successful launches stream command stdout and stderr back to the caller as **Agent Feedback** while also capturing them for review. `isobox` writes a short task metadata prelude and completion summary on stderr, preserves wrapped command stdout for command output, captures patch data from the Workspace, and stores the Task Record in the project-owned **Project Task Store** under `.isobox/tasks/`.
 
 ## Review A Task Result
 
 Each execution creates a Task Record directory such as:
 
 ```text
-/tmp/isobox-records/task-0123456789abcdef/
-└── record.json
+.isobox/tasks/task-0123456789abcdef/
+├── record.json
+└── artifacts/
+    ├── stdout.txt
+    ├── stderr.txt
+    └── diff.patch
 ```
 
 Inspect the record before promotion:
 
 ```sh
-cat /tmp/isobox-records/task-0123456789abcdef/record.json
+cat .isobox/tasks/task-0123456789abcdef/record.json
 ```
 
-The record contains:
+`record.json` is intentionally metadata-first. Large review data is stored as **Task Artifacts** referenced from the record:
 
 - the Task Record schema version
 - the Effective Policy, including the Workspace Source, Workload Command,
@@ -233,8 +248,8 @@ The record contains:
   and retained Workspace path, when requested
 - the Task Attempt Outcome, distinguishing success, preparation failure,
   launch failure, Workload Command exit, and result-capture failure
-- stdout, stderr, and process exit status
-- the captured Git diff
+- stdout and stderr artifact references, plus process exit status
+- patch data in `artifacts/diff.patch`, including tracked changes and preserved reviewable untracked file content from the Workspace
 - the Promotion Report, a structured changed-file summary that flags
   high-risk categories (scripts, hooks, dependency manifests, CI workflows,
   large files, and binary-looking changes) so review can focus before
@@ -251,7 +266,7 @@ After reviewing the Task Result, apply its diff to the trusted source
 repository:
 
 ```sh
-./bin/isobox promote /tmp/isobox-records/task-0123456789abcdef
+./bin/isobox promote .isobox/tasks/task-0123456789abcdef
 ```
 
 Promotion is a review-gated movement from a Repository Workspace Task Result
@@ -274,10 +289,15 @@ that apply, so review is focused at the moment of Promotion. The report is
 informational only: it never gates or auto-applies Promotion. The user remains
 the review gate by running `isobox promote` explicitly.
 
-The report is generated from the captured Git diff, so it reflects only what
-the diff exposes. New untracked files are not included in the current POC diff;
-high-risk detection for newly added files is therefore limited until the Task
-Result captures untracked changes.
+The report is generated from the captured patch data, so it reflects what the
+Task Result exposes, including reviewable untracked files preserved in the
+diff artifact.
+
+## Cooperative Boundary And Direct Shell Escape
+
+ADR 0003 defines the first Tool-Call Sandbox as a cooperative routing workflow, not enforced shell interception. Cooperative Safe Mode means an Agent voluntarily routes shell actions through `isobox tool -- <command>` by default. Project instructions or an Agent Skill can teach that convention, but isobox does not automatically intercept arbitrary shell calls made outside its CLI.
+
+A **Direct Shell Escape** is a shell action the Agent runs without routing through isobox after fresh conversation-level human approval and a stated reason. A Direct Shell Escape creates no Task Record, receives no containment claim, produces no isobox Agent Feedback, and is not eligible for isobox Promotion unless its effects are later captured by a separate isobox Task. Use this only when the first milestone cannot practically route the command through `isobox tool`.
 
 ## Development
 
@@ -294,7 +314,6 @@ repositories.
 
 - The host Runtime Backend does **not** provide strong isolation. The bubblewrap Runtime Backend provides filesystem containment but does not provide strong resource or network isolation.
 - No Dirty Source Snapshot support
-- No interactive review prompt
 - No explicit Reuse Input brokering; Reuse Inputs are declared and recorded
   only, not mounted or brokered
 - No network, credential, resource, or process policy **enforcement** —
@@ -303,8 +322,7 @@ repositories.
   do not enforce them in this milestone
 - Repository Workspaces only; Directory Workspaces are not implemented
 - Promotion Report detection is limited to changes present in the captured
-  Git diff; new untracked files are not yet captured, so newly added
-  high-risk files may not appear in the report
+  patch data
 
 ## Project Documents
 
