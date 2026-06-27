@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -681,7 +682,7 @@ func TestPromoteAppliesReviewedTaskResultToWorkspaceSource(t *testing.T) {
 	}
 
 	recordPath := onlyTaskRecord(t, records)
-	promote := exec.Command("go", "run", ".", "promote", recordPath)
+	promote := exec.Command("go", "run", ".", "promote", "--yes", recordPath)
 	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
 	output, err = promote.CombinedOutput()
 	if err != nil {
@@ -694,6 +695,112 @@ func TestPromoteAppliesReviewedTaskResultToWorkspaceSource(t *testing.T) {
 	}
 	if string(readme) != "promoted" {
 		t.Fatalf("source repository was not promoted: %q", readme)
+	}
+
+	record := readRecord(t, recordPath)
+	if record.Promotion.Confirmation.Mode != "explicit_non_interactive" {
+		t.Fatalf("promotion confirmation mode = %q, want explicit_non_interactive", record.Promotion.Confirmation.Mode)
+	}
+}
+
+func TestPromoteAsksForConfirmationByDefault(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	recordDir := writePromotableRecord(t, source, records, readmeChangedDiff())
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	promote.Stdin = strings.NewReader("no\n")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded without confirmation:\n%s", output)
+	}
+	if !strings.Contains(string(output), "Apply this Promotion") {
+		t.Fatalf("promote did not ask for confirmation:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("Workspace Source was modified without confirmation: %q", readme)
+	}
+}
+
+func TestPromoteRecordsInteractiveConfirmation(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	recordDir := writePromotableRecord(t, source, records, readmeChangedDiff())
+
+	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	promote.Stdin = strings.NewReader("yes\n")
+	output, err := promote.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox promote failed with interactive confirmation: %v\n%s", err, output)
+	}
+
+	record := readRecord(t, recordDir)
+	if record.Promotion.Confirmation.Mode != "interactive" {
+		t.Fatalf("promotion confirmation mode = %q, want interactive", record.Promotion.Confirmation.Mode)
+	}
+}
+
+func TestPromoteAppliesPreservedUntrackedFiles(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	recordDir := writePromotableRecord(t, source, records, newFileDiff("notes.txt", "reviewed notes"))
+
+	promote := exec.Command("go", "run", ".", "promote", "--yes", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox promote failed for preserved untracked file patch: %v\n%s", err, output)
+	}
+
+	notes, err := os.ReadFile(filepath.Join(source, "notes.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(notes) != "reviewed notes\n" {
+		t.Fatalf("untracked file was not promoted: %q", notes)
+	}
+}
+
+func TestPromoteDoesNotModifyRepositoryWhenPreservedUntrackedFileValidationFails(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	record := validPromotableRecord(t, source)
+	record["result"] = map[string]any{
+		"diff": readmeChangedDiff(),
+		"artifacts": map[string]any{
+			"untracked_files": []map[string]any{
+				{"path": "artifacts/untracked/missing.txt", "target_path": "missing.txt"},
+			},
+		},
+	}
+	recordDir := writeRecordMap(t, records, "task-invalid-untracked", record)
+
+	promote := exec.Command("go", "run", ".", "promote", "--yes", recordDir)
+	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
+	output, err := promote.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox promote succeeded with missing untracked artifact:\n%s", output)
+	}
+	if !strings.Contains(string(output), "inspect untracked file artifact") {
+		t.Fatalf("error does not indicate untracked artifact validation failure:\n%s", output)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(source, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "original\n" {
+		t.Fatalf("tracked patch was applied despite validation failure: %q", readme)
+	}
+	if _, err := os.Stat(filepath.Join(source, "missing.txt")); !os.IsNotExist(err) {
+		t.Fatalf("missing untracked file unexpectedly exists, stat err: %v", err)
 	}
 }
 
@@ -962,7 +1069,7 @@ func TestPromoteRejectsEmptyDiff(t *testing.T) {
 	if err == nil {
 		t.Fatalf("isobox promote succeeded for empty diff:\n%s", output)
 	}
-	if !strings.Contains(string(output), "no diff to promote") {
+	if !strings.Contains(string(output), "no changes to promote") {
 		t.Fatalf("error does not indicate empty diff:\n%s", output)
 	}
 
@@ -983,7 +1090,7 @@ func TestPromoteAllowsWorkloadCommandExitOutcome(t *testing.T) {
 	record["outcome"] = map[string]any{"type": "workload_command_exit", "exit_code": 7}
 	recordDir := writeRecordMap(t, records, "task-failed", record)
 
-	promote := exec.Command("go", "run", ".", "promote", recordDir)
+	promote := exec.Command("go", "run", ".", "promote", "--yes", recordDir)
 	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
 	output, err := promote.CombinedOutput()
 	if err != nil {
@@ -1405,7 +1512,7 @@ func TestPromotionReportIsInformationalAndPromotionStaysExplicit(t *testing.T) {
 		t.Fatalf("promotion_report did not flag high-risk dependency manifest: %#v", record.PromotionReport.HighRisk)
 	}
 
-	promote := exec.Command("go", "run", ".", "promote", recordPath)
+	promote := exec.Command("go", "run", ".", "promote", "--yes", recordPath)
 	promote.Dir = filepath.Join("..", "..", "cmd", "isobox")
 	promoteOutput, err := promote.CombinedOutput()
 	if err != nil {
@@ -1518,6 +1625,16 @@ func readmeChangedDiff() string {
 		"@@ -1 +1 @@\n" +
 		"-original\n" +
 		"+changed\n"
+}
+
+func newFileDiff(path, line string) string {
+	return fmt.Sprintf("diff --git a/%[1]s b/%[1]s\n"+
+		"new file mode 100644\n"+
+		"index 0000000..7151c68\n"+
+		"--- /dev/null\n"+
+		"+++ b/%[1]s\n"+
+		"@@ -0,0 +1 @@\n"+
+		"+%[2]s\n", path, line)
 }
 
 func writeRecordMap(t *testing.T, records, id string, record map[string]any) string {
@@ -1678,6 +1795,11 @@ type recordView struct {
 		ExitCode int    `json:"exit_code"`
 		Error    string `json:"error"`
 	} `json:"outcome"`
+	Promotion struct {
+		Confirmation struct {
+			Mode string `json:"mode"`
+		} `json:"confirmation"`
+	} `json:"promotion"`
 	PromotionReport *promotionReportView `json:"promotion_report,omitempty"`
 }
 
