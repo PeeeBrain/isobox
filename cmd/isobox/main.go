@@ -286,7 +286,7 @@ func runTask(opts runOptions) error {
 	if launchErr != nil {
 		record.Result = taskResult{Stdout: result.Stdout, Stderr: result.Stderr}
 		record.Outcome = taskAttemptOutcome{Type: outcomeLaunchFailure, Error: launchErr.Error()}
-		if werr := writeRecord(opts.records, record); werr != nil {
+		if werr := writeArtifactBackedRecord(opts.records, record); werr != nil {
 			return werr
 		}
 		return fmt.Errorf("launch workload command: %w", launchErr)
@@ -300,7 +300,7 @@ func runTask(opts runOptions) error {
 	diff, err := ws.Diff()
 	if err != nil {
 		record.Outcome = taskAttemptOutcome{Type: outcomeResultCaptureFailure, Error: err.Error()}
-		if werr := writeRecord(opts.records, record); werr != nil {
+		if werr := writeArtifactBackedRecord(opts.records, record); werr != nil {
 			return werr
 		}
 		return fmt.Errorf("capture task result diff: %w", err)
@@ -310,14 +310,14 @@ func runTask(opts runOptions) error {
 
 	if result.ExitStatus != 0 {
 		record.Outcome = taskAttemptOutcome{Type: outcomeWorkloadCommandExit, ExitCode: result.ExitStatus}
-		if werr := writeRecord(opts.records, record); werr != nil {
+		if werr := writeArtifactBackedRecord(opts.records, record); werr != nil {
 			return werr
 		}
 		return fmt.Errorf("workload command exited with status %d", result.ExitStatus)
 	}
 
 	record.Outcome = taskAttemptOutcome{Type: outcomeSuccess}
-	return writeRecord(opts.records, record)
+	return writeArtifactBackedRecord(opts.records, record)
 }
 
 func writeRecord(recordsDir string, record taskRecord) error {

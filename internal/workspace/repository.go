@@ -66,7 +66,7 @@ func (w *RepositoryWorkspace) Diff() (string, error) {
 	}
 
 	var buf bytes.Buffer
-	cmd := gitCommand(w.Root(), "diff", "--no-ext-diff")
+	cmd := gitCommand(w.Root(), "diff", "--no-ext-diff", "HEAD")
 	cmd.Stdout = &buf
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

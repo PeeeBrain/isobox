@@ -62,6 +62,122 @@ func TestRunCreatesTaskResultFromPrivateWorkspace(t *testing.T) {
 	}
 }
 
+func TestRunCapturesTrackedModificationAdditionAndDeletion(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	mustWrite(t, source, "obsolete.txt", []byte("remove me\n"))
+	run(t, source, "git", "add", "obsolete.txt")
+	run(t, source, "git", "commit", "-m", "add obsolete file")
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf changed > README.md; printf created > created.txt; git add created.txt; rm obsolete.txt",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	for _, want := range []string{
+		"diff --git a/README.md b/README.md",
+		"-original",
+		"+changed",
+		"diff --git a/created.txt b/created.txt",
+		"new file mode",
+		"+created",
+		"diff --git a/obsolete.txt b/obsolete.txt",
+		"deleted file mode",
+		"-remove me",
+	} {
+		if !strings.Contains(record.Result.Diff, want) {
+			t.Fatalf("diff missing %q:\n%s", want, record.Result.Diff)
+		}
+	}
+}
+
+func TestRunCapturesUntrackedNonIgnoredFilesAsReviewableArtifacts(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf 'generated\n' > generated.txt",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.Result.Artifacts.Diff.Path != "artifacts/diff.patch" {
+		t.Fatalf("diff artifact path = %q, want artifacts/diff.patch", record.Result.Artifacts.Diff.Path)
+	}
+	diffArtifact, err := os.ReadFile(filepath.Join(recordPath, record.Result.Artifacts.Diff.Path))
+	if err != nil {
+		t.Fatalf("read diff artifact: %v", err)
+	}
+	diff := string(diffArtifact)
+	for _, want := range []string{
+		"diff --git a/generated.txt b/generated.txt",
+		"new file mode",
+		"+generated",
+	} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("diff artifact missing %q:\n%s", want, diff)
+		}
+	}
+}
+
+func TestRunExcludesIgnoredFilesFromTaskResultByDefault(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+	mustWrite(t, source, ".gitignore", []byte("ignored.log\n"))
+	run(t, source, "git", "add", ".gitignore")
+	run(t, source, "git", "commit", "-m", "ignore logs")
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf 'review\n' > review.txt; printf 'secret\n' > ignored.log",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isobox run failed: %v\n%s", err, output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if !strings.Contains(record.Result.Diff, "review.txt") {
+		t.Fatalf("diff missing non-ignored file:\n%s", record.Result.Diff)
+	}
+	if strings.Contains(record.Result.Diff, "ignored.log") || strings.Contains(record.Result.Diff, "secret") {
+		t.Fatalf("diff includes ignored file content:\n%s", record.Result.Diff)
+	}
+}
+
 func TestRunCapturesSchemaVersionedEffectivePolicy(t *testing.T) {
 	source := initGitRepo(t)
 	records := t.TempDir()
@@ -238,6 +354,47 @@ func TestRunRecordsEffectivePolicyWhenWorkloadCommandFails(t *testing.T) {
 	}
 	if record.Outcome.ExitCode != 7 {
 		t.Fatalf("outcome exit code = %d, want 7", record.Outcome.ExitCode)
+	}
+}
+
+func TestRunCapturesOutputExitCodeAndChangesWhenWorkloadCommandExitsNonZero(t *testing.T) {
+	source := initGitRepo(t)
+	records := t.TempDir()
+
+	cmd := exec.Command(
+		"go", "run", ".",
+		"run",
+		"--source", source,
+		"--records", records,
+		"--",
+		"sh", "-c", "printf out; printf err >&2; printf changed > README.md; printf generated > generated.txt; exit 7",
+	)
+	cmd.Dir = filepath.Join("..", "..", "cmd", "isobox")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("isobox run succeeded for failing workload command:\n%s", output)
+	}
+
+	recordPath := onlyTaskRecord(t, records)
+	record := readRecord(t, recordPath)
+
+	if record.Result.ExitStatus != 7 {
+		t.Fatalf("exit status = %d, want 7", record.Result.ExitStatus)
+	}
+	if record.Result.Stdout != "out" {
+		t.Fatalf("stdout = %q, want out", record.Result.Stdout)
+	}
+	if record.Result.Stderr != "err" {
+		t.Fatalf("stderr = %q, want err", record.Result.Stderr)
+	}
+	for _, want := range []string{"README.md", "+changed", "generated.txt", "+generated"} {
+		if !strings.Contains(record.Result.Diff, want) {
+			t.Fatalf("diff missing %q after non-zero exit:\n%s", want, record.Result.Diff)
+		}
+	}
+	if record.Outcome.Type != "workload_command_exit" || record.Outcome.ExitCode != 7 {
+		t.Fatalf("outcome = %#v, want workload_command_exit exit_code=7", record.Outcome)
 	}
 }
 
@@ -1418,7 +1575,32 @@ func readRecord(t *testing.T, recordDir string) recordView {
 	if err := json.Unmarshal(recordBytes, &record); err != nil {
 		t.Fatal(err)
 	}
+	hydrateRecordArtifacts(t, recordDir, &record)
 	return record
+}
+
+func hydrateRecordArtifacts(t *testing.T, recordDir string, record *recordView) {
+	t.Helper()
+
+	if record.Result.Artifacts.Stdout.Path != "" {
+		record.Result.Stdout = readTaskArtifact(t, recordDir, record.Result.Artifacts.Stdout.Path)
+	}
+	if record.Result.Artifacts.Stderr.Path != "" {
+		record.Result.Stderr = readTaskArtifact(t, recordDir, record.Result.Artifacts.Stderr.Path)
+	}
+	if record.Result.Artifacts.Diff.Path != "" {
+		record.Result.Diff = readTaskArtifact(t, recordDir, record.Result.Artifacts.Diff.Path)
+	}
+}
+
+func readTaskArtifact(t *testing.T, recordDir, rel string) string {
+	t.Helper()
+
+	b, err := os.ReadFile(filepath.Join(recordDir, rel))
+	if err != nil {
+		t.Fatalf("read task artifact %s: %v", rel, err)
+	}
+	return string(b)
 }
 
 type recordView struct {
@@ -1479,6 +1661,17 @@ type recordView struct {
 		Stdout     string `json:"stdout"`
 		Stderr     string `json:"stderr"`
 		Diff       string `json:"diff"`
+		Artifacts  struct {
+			Stdout struct {
+				Path string `json:"path"`
+			} `json:"stdout"`
+			Stderr struct {
+				Path string `json:"path"`
+			} `json:"stderr"`
+			Diff struct {
+				Path string `json:"path"`
+			} `json:"diff"`
+		} `json:"artifacts"`
 	} `json:"result"`
 	Outcome struct {
 		Type     string `json:"type"`
