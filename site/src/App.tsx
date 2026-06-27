@@ -142,28 +142,7 @@ function App() {
             <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-12 md:py-20 space-y-24">
                 {/* Hero Section */}
                 <section className="text-center space-y-8 flex flex-col items-center">
-                    {/* Announcement Pills */}
-                    <div className="flex flex-wrap gap-2 justify-center max-w-2xl">
-                        <Badge
-                            variant="outline"
-                            className="border-zinc-800 bg-zinc-950 text-zinc-400 py-1 px-3"
-                        >
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-2 inline-block animate-pulse"></span>
-                            Linux / WSL2 first
-                        </Badge>
-                        <Badge
-                            variant="outline"
-                            className="border-zinc-800 bg-zinc-950 text-zinc-400 py-1 px-3"
-                        >
-                            Built for safer coding-agent autonomy
-                        </Badge>
-                        <Badge
-                            variant="outline"
-                            className="border-zinc-800 bg-zinc-950 text-zinc-400 py-1 px-3"
-                        >
-                            Downloads latest GitHub Release binary
-                        </Badge>
-                    </div>
+
 
                     <div className="space-y-4 max-w-3xl">
                         <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-zinc-100 leading-tight md:leading-none">
