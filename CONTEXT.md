@@ -180,6 +180,18 @@ _Avoid_: risk report, review verdict
 The movement of task output or artifacts out of a Sandbox without applying them to a trusted repository.
 _Avoid_: promotion
 
+**Update Target**:
+The `isobox` executable selected from the user's `PATH` that a self-update replaces.
+_Avoid_: current executable, install directory
+
+**Doctor Check**:
+A read-only readiness check that inspects host or project conditions and reports whether isobox can be used as intended.
+_Avoid_: fix, repair, remediation
+
+**Doctor Finding**:
+The result of a Doctor Check, classified as `ok`, `warning`, or `error`.
+_Avoid_: task result, preflight failure
+
 **Sandbox Policy**:
 A versioned description of the capabilities and limits requested for a Task.
 _Avoid_: config, settings
@@ -246,6 +258,12 @@ _Avoid_: merged config, final settings
 - Human-facing Promotion asks for confirmation by default
 - A **Promotion Report** summarizes a **Task Result** before explicit **Promotion** but never gates or auto-applies it
 - **Export** moves a **Task Result** out of isobox-managed storage
+- An **Update Target** is selected from the user's `PATH`, not from the running executable path
+- If multiple `isobox` executables exist on `PATH`, the first one is the **Update Target**
+- A self-update validates the downloaded `isobox` executable before replacing the **Update Target**
+- A **Doctor Check** does not mutate host or project state
+- A **Doctor Finding** with severity `error` means a required readiness condition failed
+- A **Doctor Finding** with severity `warning` means isobox can still run, but some workflow may be unavailable or blocked until the condition changes
 - A **Containment Boundary** allows results to leave a **Sandbox** only through explicit **Export** or reviewed **Promotion**
 - A **Task** has exactly one **Effective Policy**
 - An **Effective Policy** is captured in the **Task Record**
