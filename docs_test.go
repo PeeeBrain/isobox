@@ -209,6 +209,42 @@ func TestReadmeDocumentsDirectShellEscapeBoundary(t *testing.T) {
 	}
 }
 
+func TestReadmeDocumentsDoctorCommand(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"isobox doctor",
+		"Doctor Finding",
+		"Doctor Check",
+		"read-only",
+		"status 1 only when",
+		"ok",
+		"warning",
+		"error",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document isobox doctor point %q", phrase)
+		}
+	}
+}
+
+func TestReadmeDocumentsRicherHelpSurface(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"isobox --help",
+		"isobox <command> --help",
+		"Workload Command",
+		"per-command usage",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document the richer help surface point %q", phrase)
+		}
+	}
+}
+
 func TestReadmeDocumentsToolCallMilestoneBehavior(t *testing.T) {
 	readme := normalize(readReadme(t))
 
