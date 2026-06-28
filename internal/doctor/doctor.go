@@ -97,15 +97,10 @@ func (s Scope) String() string {
 // are project-scoped; everything else is global. The lookup is
 // deliberately small and explicit so the grouping is easy to audit.
 func CheckScope(id string) Scope {
-	switch id {
-	case "project-policy",
-		"project-gitignore",
-		"project-task-store",
-		"project-bwrap":
+	if strings.HasPrefix(id, "project-") {
 		return ScopeProject
-	default:
-		return ScopeGlobal
 	}
+	return ScopeGlobal
 }
 
 // Check is a single read-only readiness probe and its Finding.

@@ -357,19 +357,27 @@ isobox doctor
 isobox doctor /path/to/repository
 ```
 
-The first 0.1.1 slice reports isobox version metadata as an `ok` finding and
-reserves a `Project checks` section for project-scoped checks that will land
-in follow-up slices. The grouped output is human-readable and stable so
-scripts can grep it. `isobox doctor` never creates or modifies host or
-project state.
+The grouped output separates `Global checks` from conditional `Project checks`.
+Global checks run on every invocation: version metadata, `git` on `PATH`
+(error when missing), `bubblewrap (bwrap)` on `PATH` (warning because
+Tool-Call Sandboxes via `isobox tool` are unavailable), `isobox` on `PATH`,
+and multiple isobox binaries on PATH (duplicate `isobox` binaries are listed).
 
-The doctor command also runs the following global checks on every
-invocation: `git` on `PATH` (error when missing), `bubblewrap (bwrap)`
-on `PATH` (warning with Tool-Call Sandbox consequence when missing),
-`isobox` on `PATH` (warning when missing), and multiple `isobox`
-binaries on `PATH` (warning listing the active binary plus duplicates).
-None of these checks call the network, evaluate self-update
-eligibility, or run a bubblewrap self-test.
+When the target directory is inside a Git repository, project checks use the
+repository root. They report a missing `.isobox/config.yaml` as a single
+initialization warning, parse existing policy, surface unsupported first-
+milestone policy fields, check `.isobox/tasks/` gitignore coverage, warn when
+tracked or untracked repository changes would make `isobox tool` preflight
+reject the repository, and verify task-store writability without creating
+`.isobox/tasks/`. `ok` means ready, `warning` means an affected workflow may be
+blocked but doctor still exits 0, and `error` means doctor exits 1.
+
+`isobox doctor` is read-only: it does not run `isobox init`, create or modify
+`.isobox/tasks/`, `.gitignore`, policy files, task records, or any other
+project file. It also does not call the network, check update availability
+(use `isobox update --check` for that), evaluate self-update eligibility, run a
+platform support check, run a bubblewrap self-test, or automatically remediate
+findings.
 
 ## Check For Updates
 

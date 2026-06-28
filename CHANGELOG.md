@@ -20,20 +20,20 @@ under `Unreleased` until a human-approved release is created.
   `isobox <command> --help` for `init`, `run`, `tool`, `promote`,
   `version`, `doctor`, and `update` prints command-specific usage and
   examples.
-- `isobox doctor [path]` read-only diagnostic command. The 0.1.1 first
-  slice reports isobox version metadata as a `Doctor Finding` with
-  severity `ok` and exits with status 1 only when any finding has
-  severity `error`. The grouped output distinguishes global checks
-  from project checks so richer checks can land in follow-up slices
-  without changing the CLI shape.
+- `isobox doctor [path]` read-only diagnostic command. It reports global
+  readiness checks, discovers the target Git repository root, diagnoses
+  missing or malformed project policy, accumulates unsupported first-
+  milestone Tool-Call Sandbox policy findings, checks `.isobox/tasks/`
+  gitignore coverage, warns about dirty trusted repositories, verifies
+  task-store writability without creating project files, and exits with
+  status 1 only when any `Doctor Finding` has severity `error`.
 - Global `isobox doctor` checks: version metadata, `git` on PATH
   (error when missing), `bubblewrap (bwrap)` on PATH (warning with
-  Tool-Call Sandbox consequence when missing), `isobox` on PATH
-  (warning when missing), and multiple `isobox` binaries on PATH
-  (warning listing the active binary plus duplicates). The checks
-  use an injectable PATH lookup so they are unit-tested without
-  depending on the host's actual dependency state, and they never
-  call the network or evaluate self-update eligibility.
+  Tool-Call Sandbox consequence when missing, project readiness error when
+  required by parsed policy), `isobox` on PATH (warning when missing), and
+  multiple `isobox` binaries on PATH (warning listing the active binary plus
+  duplicates). The checks never call the network or evaluate self-update
+  eligibility.
 - `isobox update --check` observability-only update check. The
   command reports the current version, the latest stable GitHub
   Release (drafts and prereleases are ignored), the selected Update
