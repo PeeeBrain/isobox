@@ -46,6 +46,7 @@ type githubReleasePayload struct {
 	Prerelease  bool      `json:"prerelease"`
 	Draft       bool      `json:"draft"`
 	PublishedAt time.Time `json:"published_at"`
+	Assets      []Asset   `json:"assets"`
 }
 
 // ListReleases fetches the full release list for the configured
@@ -95,6 +96,7 @@ func (c *GitHubReleaseClient) ListReleases() ([]Release, error) {
 			Prerelease:  r.Prerelease,
 			Draft:       r.Draft,
 			PublishedAt: r.PublishedAt,
+			Assets:      r.Assets,
 		})
 	}
 	return releases, nil

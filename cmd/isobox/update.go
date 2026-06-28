@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"isobox/internal/update"
@@ -13,7 +14,7 @@ import (
 // updateUsage is the help line emitted for `isobox update` argument
 // errors. It is short because the rich per-command help is one flag
 // away; the message exists to give the user a next step.
-const updateUsage = "usage: isobox update --check"
+const updateUsage = "usage: isobox update [--check]"
 
 // managedPathPrefixesEnvVar is the environment variable that adds
 // extra managed path prefixes to the updater's refusal list. The
@@ -86,24 +87,23 @@ func (c *execReleaseClient) ListReleases() ([]update.Release, error) {
 	return releases, nil
 }
 
-// updateCmd is the entry point for `isobox update --check`. The
-// command is the observability-only slice: it reports the current
-// version, the latest stable release, the selected Update Target,
-// and any duplicate isobox binaries on PATH, but it does not
-// download, verify, or replace anything.
-//
-// The full update path (download, checksum verification, replace,
-// rollback) is intentionally out of scope here; follow-up slices
-// will add it.
+// updateCmd is the entry point for `isobox update` and
+// `isobox update --check`. The check mode reports the current
+// version, latest stable release, selected Update Target, and any
+// duplicate isobox binaries on PATH. The default mode additionally
+// downloads the selected release assets, verifies and smoke-tests the
+// downloaded binary, replaces the target with a backup, and rolls back
+// when post-replacement validation fails.
 func updateCmd(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("isobox update: %s", updateUsage)
-	}
-	if args[0] != "--check" {
-		return fmt.Errorf("isobox update: unknown flag %q; %s", args[0], updateUsage)
-	}
-	if len(args) > 1 {
-		return fmt.Errorf("isobox update: %s", updateUsage)
+	checkOnly := false
+	if len(args) > 0 {
+		if args[0] != "--check" {
+			return fmt.Errorf("isobox update: unknown flag %q; %s", args[0], updateUsage)
+		}
+		if len(args) > 1 {
+			return fmt.Errorf("isobox update: %s", updateUsage)
+		}
+		checkOnly = true
 	}
 
 	if err := update.RefuseDevVersion(version); err != nil {
@@ -147,8 +147,22 @@ func updateCmd(args []string) error {
 
 	if status == update.StatusUpToDate {
 		fmt.Println("isobox is already up to date")
-	} else {
-		fmt.Println("a newer stable release is available")
+		return nil
 	}
+	fmt.Println("a newer stable release is available")
+	if checkOnly {
+		return nil
+	}
+
+	prepared, err := update.PrepareRelease(latest, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	defer prepared.Cleanup()
+	result, err := update.InstallPreparedRelease(prepared, target)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("updated isobox to %s\n", result.InstalledVersion)
 	return nil
 }
