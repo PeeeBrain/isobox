@@ -33,7 +33,7 @@ func TestHelpTopLevelListsAllCommandsWithShortPurposes(t *testing.T) {
 			text := string(out)
 
 			// Each top-level command must be named in the help text.
-			for _, want := range []string{"init", "run", "tool", "promote", "version", "doctor"} {
+			for _, want := range []string{"init", "run", "tool", "promote", "version", "doctor", "update"} {
 				if !strings.Contains(text, want) {
 					t.Errorf("isobox %s does not list command %q:\n%s", flag, want, text)
 				}
@@ -87,6 +87,10 @@ func TestHelpPerCommandPrintsUsageAndExamples(t *testing.T) {
 			name:     "doctor",
 			mustHave: []string{"isobox doctor", "Usage:", "Examples:", "Doctor Finding"},
 		},
+		{
+			name:     "update",
+			mustHave: []string{"isobox update", "Usage:", "Examples:", "Update Target"},
+		},
 	}
 
 	for _, c := range commands {
@@ -103,7 +107,7 @@ func TestHelpPerCommandPrintsUsageAndExamples(t *testing.T) {
 			}
 			// Per-command help must not be the terse single-line usage that
 			// the old help system produced.
-			if strings.TrimSpace(text) == "usage: isobox <init|run|tool|promote|version|doctor>" {
+			if strings.TrimSpace(text) == "usage: isobox <init|run|tool|promote|version|doctor|update>" {
 				t.Errorf("isobox %s --help returned only the terse usage line", c.name)
 			}
 		})

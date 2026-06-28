@@ -363,6 +363,37 @@ in follow-up slices. The grouped output is human-readable and stable so
 scripts can grep it. `isobox doctor` never creates or modifies host or
 project state.
 
+The doctor command also runs the following global checks on every
+invocation: `git` on `PATH` (error when missing), `bubblewrap (bwrap)`
+on `PATH` (warning with Tool-Call Sandbox consequence when missing),
+`isobox` on `PATH` (warning when missing), and multiple `isobox`
+binaries on `PATH` (warning listing the active binary plus duplicates).
+None of these checks call the network, evaluate self-update
+eligibility, or run a bubblewrap self-test.
+
+## Check For Updates
+
+`isobox update --check` is the observability-only entry point for
+keeping an installed release current. The check path uses the GitHub
+Releases API to identify the latest stable release (drafts and
+prereleases are ignored), compares it to the running version, and
+reports the selected **Update Target** resolved from the first
+`isobox` executable on your `PATH`. Additional `isobox` binaries on
+`PATH` are listed as warnings without changing the selected target.
+
+```sh
+isobox update --check
+```
+
+The check never downloads or replaces anything. It refuses `dev`
+builds and clearly package-manager-managed Update Targets (e.g.
+`/usr/bin`, `/opt/homebrew`, `/snap`, `/var/lib/dpkg`,
+`/var/lib/rpm`, `/var/lib/pacman`, `/nix/store`) with guidance to
+use the package manager or move the binary to a writable manual-style
+directory such as `${HOME}/.local/bin` or `/usr/local/bin`. The
+release metadata source is injectable so the tests do not depend on
+live GitHub.
+
 Run `isobox --help` for the full command list and `isobox <command> --help`
 for per-command usage and examples.
 
