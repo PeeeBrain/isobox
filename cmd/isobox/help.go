@@ -26,6 +26,7 @@ func helpTopLevel() string {
 	b.WriteString("  promote   Apply a reviewed Task Result to the trusted repository.\n")
 	b.WriteString("  version   Print the isobox version, commit, and build date.\n")
 	b.WriteString("  doctor    Run read-only Doctor Checks and report Doctor Findings.\n")
+	b.WriteString("  update    Check for a newer stable release of isobox (observability only).\n")
 	b.WriteString("\n")
 	b.WriteString("Glossary terms used throughout this help: Task, Workspace, Sandbox,\n")
 	b.WriteString("Task Record, Task Result, Promotion, and Workload Command.\n")
@@ -54,6 +55,8 @@ func helpForCommand(name string) (string, bool) {
 		return helpVersion(), true
 	case "doctor":
 		return helpDoctor(), true
+	case "update":
+		return helpUpdate(), true
 	default:
 		return "", false
 	}
@@ -64,14 +67,14 @@ func helpForCommand(name string) (string, bool) {
 // must remain short: the rich top-level help is one flag away, and a long
 // unknown-command message hides the next step.
 func helpUnknownCommand() string {
-	return "usage: isobox <init|run|tool|promote|version|doctor>\n" +
+	return "usage: isobox <init|run|tool|promote|version|doctor|update>\n" +
 		"run `isobox --help` for the full command list.\n"
 }
 
 // helpMissingCommand returns the concise actionable usage shown when the
 // user runs `isobox` with no arguments at all.
 func helpMissingCommand() string {
-	return "usage: isobox <init|run|tool|promote|version|doctor>\n" +
+	return "usage: isobox <init|run|tool|promote|version|doctor|update>\n" +
 		"run `isobox --help` for the full command list.\n"
 }
 
@@ -196,6 +199,29 @@ func helpDoctor() string {
 	b.WriteString("\n")
 	b.WriteString("Related: Doctor Check, Doctor Finding, Update Target, Sandbox,\n")
 	b.WriteString("Workload Command.\n")
+	return b.String()
+}
+
+func helpUpdate() string {
+	var b strings.Builder
+	b.WriteString("isobox update - Check for newer stable releases of isobox\n")
+	b.WriteString("\n")
+	b.WriteString("Usage:\n")
+	b.WriteString("  isobox update --check\n")
+	b.WriteString("\n")
+	b.WriteString("Reports the current isobox version, the latest stable GitHub Release,\n")
+	b.WriteString("and the selected Update Target resolved from the first isobox on the\n")
+	b.WriteString("host PATH. The check path does not download or replace anything; it\n")
+	b.WriteString("refuses dev builds and clearly package-manager-managed Update Targets.\n")
+	b.WriteString("Draft and prerelease releases are ignored; only stable releases are\n")
+	b.WriteString("considered. Update Target resolution and managed-path detection are\n")
+	b.WriteString("covered by unit tests so the check can run without depending on the\n")
+	b.WriteString("host's actual installation.\n")
+	b.WriteString("\n")
+	b.WriteString("Examples:\n")
+	b.WriteString("  isobox update --check\n")
+	b.WriteString("\n")
+	b.WriteString("Related: Update Target, Doctor Check, Doctor Finding.\n")
 	return b.String()
 }
 

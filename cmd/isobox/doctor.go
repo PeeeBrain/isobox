@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"isobox/internal/doctor"
+	"isobox/internal/doctorenv"
 )
 
 // doctorUsageError is returned when `isobox doctor` receives an invalid
@@ -32,9 +33,11 @@ func doctorCmd(args []string) error {
 		return err
 	}
 
-	checks := []doctor.Check{
-		doctor.OK("version", "isobox version", fmt.Sprintf("%s (commit %s, %s)", version, commit, date)),
-	}
+	checks := doctorenv.GlobalChecks(doctorenv.CheckInputs{
+		Version: version,
+		Commit:  commit,
+		Lookup:  doctorenv.NewHostLookup(),
+	})
 
 	report := doctor.NewReport(version, commit, target, checks)
 	fmt.Print(report.Format())

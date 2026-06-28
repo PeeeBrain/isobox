@@ -182,6 +182,8 @@ func run(args []string) error {
 		return nil
 	case "doctor":
 		return runSubcommandWithHelp("doctor", args[1:], doctorCmd)
+	case "update":
+		return runSubcommandWithHelp("update", args[1:], updateCmd)
 	default:
 		return errors.New(helpUnknownCommand())
 	}

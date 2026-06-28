@@ -229,6 +229,54 @@ func TestReadmeDocumentsDoctorCommand(t *testing.T) {
 	}
 }
 
+func TestReadmeDocumentsUpdateCheckCommand(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"isobox update --check",
+		"Update Target",
+		"GitHub Releases API",
+		"stable release",
+		"dev build",
+		"package-manager-managed",
+		"${HOME}/.local/bin",
+		"/usr/local/bin",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document isobox update --check point %q", phrase)
+		}
+	}
+
+	forbidden := []string{
+		"isobox update --check downloads and replaces",
+		"isobox update runs install.sh",
+	}
+	for _, phrase := range forbidden {
+		if strings.Contains(readme, phrase) {
+			t.Errorf("README overclaims isobox update --check behavior with %q", phrase)
+		}
+	}
+}
+
+func TestReadmeDocumentsGlobalDoctorChecks(t *testing.T) {
+	readme := normalize(readReadme(t))
+
+	wantPhrases := []string{
+		"git on PATH",
+		"bubblewrap (bwrap)",
+		"Tool-Call Sandbox",
+		"isobox on PATH",
+		"multiple isobox binaries on PATH",
+		"call the network",
+	}
+	for _, phrase := range wantPhrases {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README does not document the global doctor checks point %q", phrase)
+		}
+	}
+}
+
 func TestReadmeDocumentsRicherHelpSurface(t *testing.T) {
 	readme := normalize(readReadme(t))
 
