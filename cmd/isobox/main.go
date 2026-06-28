@@ -150,31 +150,63 @@ func (e commandExitError) Error() string {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: isobox <init|run|tool|promote|version>")
+		return errors.New(helpMissingCommand())
 	}
 
 	switch args[0] {
 	case "--help", "-h", "help":
-		fmt.Println("usage: isobox <init|run|tool|promote|version>")
+		printTopLevelHelp()
 		return nil
 	case "init":
-		return initCmd(args[1:])
+		return runSubcommandWithHelp("init", args[1:], initCmd)
 	case "run":
+		if wantsSubcommandHelp(args[1:]) {
+			printCommandHelp("run")
+			return nil
+		}
 		opts, err := parseRun(args[1:])
 		if err != nil {
 			return err
 		}
 		return runTask(opts)
 	case "tool":
-		return toolCmd(args[1:])
+		return runSubcommandWithHelp("tool", args[1:], toolCmd)
 	case "promote":
-		return promote(args[1:])
+		return runSubcommandWithHelp("promote", args[1:], promote)
 	case "version":
+		if wantsSubcommandHelp(args[1:]) {
+			printCommandHelp("version")
+			return nil
+		}
 		fmt.Printf("isobox %s\ncommit: %s\ndate: %s\n", version, commit, date)
 		return nil
+	case "doctor":
+		return runSubcommandWithHelp("doctor", args[1:], doctorCmd)
 	default:
-		return errors.New("usage: isobox <init|run|tool|promote|version>")
+		return errors.New(helpUnknownCommand())
 	}
+}
+
+// wantsSubcommandHelp reports whether the subcommand arguments begin with
+// a help flag. The flag is accepted as the first argument only; later
+// arguments are passed to the subcommand parser unchanged.
+func wantsSubcommandHelp(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return args[0] == "--help" || args[0] == "-h"
+}
+
+// runSubcommandWithHelp routes a subcommand invocation to its per-command
+// help when the first argument is a help flag, or to the subcommand
+// handler otherwise. Centralizing this keeps per-command help and
+// dispatch behavior aligned across every command.
+func runSubcommandWithHelp(name string, args []string, handler func([]string) error) error {
+	if wantsSubcommandHelp(args) {
+		printCommandHelp(name)
+		return nil
+	}
+	return handler(args)
 }
 
 func parseRun(args []string) (runOptions, error) {
