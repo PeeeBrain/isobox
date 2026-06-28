@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"isobox/internal/doctor"
 	"isobox/internal/doctorenv"
+	"isobox/internal/doctorproject"
 )
 
 // doctorUsageError is returned when `isobox doctor` receives an invalid
@@ -33,13 +35,18 @@ func doctorCmd(args []string) error {
 		return err
 	}
 
+	lookup := doctorenv.NewHostLookup()
 	checks := doctorenv.GlobalChecks(doctorenv.CheckInputs{
 		Version: version,
 		Commit:  commit,
-		Lookup:  doctorenv.NewHostLookup(),
+		Lookup:  lookup,
 	})
+	_, gitErr := exec.LookPath("git")
+	_, bwrapErr := exec.LookPath("bwrap")
+	projectRoot, projectChecks := doctorproject.Checks(target, gitErr == nil, bwrapErr == nil)
+	checks = append(checks, projectChecks...)
 
-	report := doctor.NewReport(version, commit, target, checks)
+	report := doctor.NewReport(version, commit, projectRoot, checks)
 	fmt.Print(report.Format())
 
 	if report.ExitCode() == 0 {
@@ -56,7 +63,11 @@ func doctorCmd(args []string) error {
 func resolveDoctorTarget(args []string) (string, error) {
 	switch len(args) {
 	case 0:
-		return "", nil
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("isobox doctor: determine current directory: %w", err)
+		}
+		return cwd, nil
 	case 1:
 		path := args[0]
 		info, err := os.Stat(path)
