@@ -15,6 +15,38 @@ import (
 // away; the message exists to give the user a next step.
 const updateUsage = "usage: isobox update --check"
 
+// managedPathPrefixesEnvVar is the environment variable that adds
+// extra managed path prefixes to the updater's refusal list. The
+// default list already covers the common package-manager-managed
+// locations; the env var exists for two narrow cases: (1) power
+// users with unusual system-managed install locations who want the
+// updater to refuse to replace those binaries, and (2) the
+// integration test suite, which uses a temp directory whose path
+// would not be in the default list.
+//
+// The variable holds a single path per line so the value can be
+// edited without escaping commas.
+const managedPathPrefixesEnvVar = "ISOBOX_UPDATE_MANAGED_PATH_PREFIXES"
+
+// extraManagedPathPrefixes reads the managed-path env var and
+// returns the parsed list. Empty lines are skipped. The function is
+// called once per `isobox update --check` invocation.
+func extraManagedPathPrefixes() []string {
+	raw := os.Getenv(managedPathPrefixesEnvVar)
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
 // updateClientFactory builds the ReleaseClient used by the update
 // command. The factory reads ISOBOX_UPDATE_CLIENT from the
 // environment; when set, the command treats the value as an absolute
@@ -83,7 +115,7 @@ func updateCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := update.CheckManagedTarget(target.Path); err != nil {
+	if err := update.CheckManagedTargetWithPrefixes(target.Path, extraManagedPathPrefixes()); err != nil {
 		return err
 	}
 

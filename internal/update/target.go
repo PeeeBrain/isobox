@@ -80,6 +80,17 @@ func ResolveUpdateTarget(lookup PathLookup) (Target, error) {
 // user-local bin directories are NOT considered managed because
 // users typically write to those locations manually.
 func IsManagedPath(path string) bool {
+	return IsManagedPathWithPrefixes(path, nil)
+}
+
+// IsManagedPathWithPrefixes reports whether the given path lives
+// under a managed directory, treating the supplied extra prefixes as
+// additional managed locations. Callers that need to evaluate paths
+// against a non-default list (for example, integration tests that
+// use a temporary directory) pass the extra prefixes here. The
+// package-level IsManagedPath is a thin wrapper that adds no extra
+// prefixes.
+func IsManagedPathWithPrefixes(path string, extraPrefixes []string) bool {
 	cleaned := filepath.Clean(path)
 	if !strings.HasSuffix(cleaned, string(filepath.Separator)) {
 		// Treat the path as a directory tree root for prefix
@@ -91,6 +102,18 @@ func IsManagedPath(path string) bool {
 			return true
 		}
 	}
+	for _, prefix := range extraPrefixes {
+		if prefix == "" {
+			continue
+		}
+		normalized := filepath.Clean(prefix)
+		if !strings.HasSuffix(normalized, string(filepath.Separator)) {
+			normalized = normalized + string(filepath.Separator)
+		}
+		if strings.HasPrefix(cleaned, normalized) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -99,7 +122,18 @@ func IsManagedPath(path string) bool {
 // managed. The error text names the directory and tells the user to
 // use the package manager instead of `isobox update`.
 func CheckManagedTarget(path string) error {
-	if !IsManagedPath(path) {
+	return CheckManagedTargetWithPrefixes(path, nil)
+}
+
+// CheckManagedTargetWithPrefixes is the same check as
+// CheckManagedTarget, with the supplied prefixes added to the
+// default managed list. The CLI uses this to honor
+// ISOBOX_UPDATE_MANAGED_PATH_PREFIXES so power users with unusual
+// system-managed install locations and the integration test suite
+// can teach the updater about additional prefixes without
+// recompiling.
+func CheckManagedTargetWithPrefixes(path string, extraPrefixes []string) error {
+	if !IsManagedPathWithPrefixes(path, extraPrefixes) {
 		return nil
 	}
 	return fmt.Errorf("refusing to update %s: this path is inside a package-manager- or system-managed location; reinstall isobox through your package manager or move it to a writable manual-style directory (e.g. %s or %s) before running `isobox update`", path, "${HOME}/.local/bin", "/usr/local/bin")

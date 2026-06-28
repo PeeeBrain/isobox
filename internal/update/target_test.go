@@ -134,3 +134,39 @@ func TestCheckManagedTargetAllowsWritableManualTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestIsManagedPathWithPrefixesAddsCallerSuppliedPrefixes(t *testing.T) {
+	// A prefix not in the default list should be treated as managed
+	// when the caller supplies it; a prefix in the default list
+	// should remain managed even when the caller does not re-supply
+	// it; a non-managed path should remain non-managed.
+	cases := []struct {
+		name    string
+		path    string
+		extra   []string
+		managed bool
+	}{
+		{"default-managed still refuses", "/usr/bin/isobox", nil, true},
+		{"default-non-managed still allowed", "/home/u/.local/bin/isobox", nil, false},
+		{"extra prefix refuses matching path", "/var/tmp/test-isobox/bin/isobox", []string{"/var/tmp/test-isobox/"}, true},
+		{"extra prefix does not affect unrelated path", "/home/u/.local/bin/isobox", []string{"/var/tmp/test-isobox/"}, false},
+		{"empty extra prefix is ignored", "/home/u/.local/bin/isobox", []string{""}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := update.IsManagedPathWithPrefixes(c.path, c.extra); got != c.managed {
+				t.Errorf("IsManagedPathWithPrefixes(%q, %v) = %v, want %v", c.path, c.extra, got, c.managed)
+			}
+		})
+	}
+}
+
+func TestCheckManagedTargetWithPrefixesRefusesExtraPrefixMatches(t *testing.T) {
+	err := update.CheckManagedTargetWithPrefixes("/var/tmp/test-isobox/bin/isobox", []string{"/var/tmp/test-isobox/"})
+	if err == nil {
+		t.Fatal("CheckManagedTargetWithPrefixes did not refuse a path under the extra prefix")
+	}
+	if !strings.Contains(err.Error(), "package manager") && !strings.Contains(err.Error(), "system") {
+		t.Errorf("CheckManagedTargetWithPrefixes error does not mention package manager: %v", err)
+	}
+}

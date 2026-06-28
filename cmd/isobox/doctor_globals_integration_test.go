@@ -67,7 +67,18 @@ func TestDoctorReportsGitMissingAsErrorWithConsequenceAndFix(t *testing.T) {
 }
 
 func TestDoctorReportsBwrapOnPathAsOK(t *testing.T) {
-	result := runDoctorFromDir(t, t.TempDir())
+	// The bwrap-on-path check uses exec.LookPath, which only
+	// requires an executable file by that name. The doctor does not
+	// invoke bwrap. The test therefore builds a fake bwrap in a
+	// temp directory and prepends that directory to PATH, so the
+	// test does not depend on bubblewrap being installed on the
+	// host.
+	binPath := buildIsobox(t)
+	binDir := filepath.Dir(binPath)
+	fakeBwrap := writeFakeExecutable(t, "bwrap")
+	path := filepath.Dir(fakeBwrap) + string(os.PathListSeparator) + binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+
+	result := runDoctorFromDirWithEnv(t, t.TempDir(), []string{"PATH=" + path})
 	if result.err != nil {
 		t.Fatalf("isobox doctor failed: %v\n%s", result.err, result.combined)
 	}
@@ -77,9 +88,33 @@ func TestDoctorReportsBwrapOnPathAsOK(t *testing.T) {
 }
 
 func TestDoctorReportsBwrapMissingAsWarningNamingToolCallSandbox(t *testing.T) {
-	isolated := buildIsolatedPath(t, "git") // keep git; drop bwrap
-
-	result := runDoctorFromDirWithEnv(t, t.TempDir(), []string{"PATH=" + isolated})
+	// The test builds a fully controlled PATH that contains only
+	// git and the test's own isobox binary; bwrap is intentionally
+	// absent. The host PATH is not prepended, so a real bwrap
+	// installed on the host cannot satisfy the check. The git
+	// binary is copied from the host because it is a system
+	// dependency isobox itself relies on, and rewriting it as a fake
+	// would be over-scoping the test.
+	binPath := buildIsobox(t)
+	binDir := filepath.Dir(binPath)
+	hostGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("test setup requires git on host PATH: %v", err)
+	}
+	gitLink := filepath.Join(binDir, "git")
+	if err := os.Symlink(hostGit, gitLink); err != nil {
+		data, err := os.ReadFile(hostGit)
+		if err != nil {
+			t.Fatalf("read git binary: %v", err)
+		}
+		if err := os.WriteFile(gitLink, data, 0o755); err != nil {
+			t.Fatalf("write git binary: %v", err)
+		}
+	}
+	// PATH contains only the controlled directory. The host PATH is
+	// deliberately excluded so a real bwrap installed on the host
+	// cannot satisfy the check.
+	result := runDoctorFromDirWithEnv(t, t.TempDir(), []string{"PATH=" + binDir})
 	if result.err != nil {
 		t.Fatalf("isobox doctor should exit 0 with only warning findings: %v\n%s", result.err, result.combined)
 	}
@@ -109,11 +144,15 @@ func TestDoctorReportsIsoboxOnPathAsOK(t *testing.T) {
 }
 
 func TestDoctorReportsIsoboxMissingAsWarning(t *testing.T) {
-	// A PATH that contains only git and bwrap will leave the isobox
-	// check unable to find the binary by name.
-	isolated := buildIsolatedPath(t, "git", "bwrap")
+	// A PATH that contains git and a fake bwrap but no isobox will
+	// leave the isobox check unable to find the binary by name. The
+	// fake bwrap is built in a temp dir so the test does not depend
+	// on bubblewrap being installed on the host.
+	fakeBwrap := writeFakeExecutable(t, "bwrap")
+	isolated := buildIsolatedPath(t, "git")
+	path := isolated + string(os.PathListSeparator) + filepath.Dir(fakeBwrap)
 
-	result := runDoctorFromDirWithEnv(t, t.TempDir(), []string{"PATH=" + isolated})
+	result := runDoctorFromDirWithEnv(t, t.TempDir(), []string{"PATH=" + path})
 	if result.err != nil {
 		t.Fatalf("isobox doctor should exit 0 with only warning findings: %v\n%s", result.err, result.combined)
 	}
@@ -141,33 +180,14 @@ func TestDoctorReportsDuplicateIsoboxAsWarning(t *testing.T) {
 		t.Fatalf("write second isobox: %v", err)
 	}
 
-	// Build a PATH that contains both isobox directories, plus git
-	// and bwrap (linked from the host) so the global checks see the
-	// expected environment.
-	hostGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatalf("test setup requires git on host PATH: %v", err)
-	}
-	hostBwrap, err := exec.LookPath("bwrap")
-	if err != nil {
-		t.Skipf("test setup requires bwrap on host PATH: %v", err)
-	}
-	depsDir := t.TempDir()
-	for _, src := range []string{hostGit, hostBwrap} {
-		name := filepath.Base(src)
-		dst := filepath.Join(depsDir, name)
-		if err := os.Symlink(src, dst); err != nil {
-			data, err := os.ReadFile(src)
-			if err != nil {
-				t.Fatalf("read %s: %v", name, err)
-			}
-			if err := os.WriteFile(dst, data, 0o755); err != nil {
-				t.Fatalf("write %s: %v", name, err)
-			}
-		}
-	}
+	// Build a PATH that contains both isobox directories, plus a
+	// fake bwrap (the doctor only checks for presence) so the
+	// missing-bwrap warning does not race with the duplicates
+	// finding. git is supplied by prepending the host PATH last so
+	// the missing-git error does not fire.
+	fakeBwrap := writeFakeExecutable(t, "bwrap")
 
-	path := binDir + string(os.PathListSeparator) + other + string(os.PathListSeparator) + depsDir
+	path := binDir + string(os.PathListSeparator) + other + string(os.PathListSeparator) + filepath.Dir(fakeBwrap) + string(os.PathListSeparator) + os.Getenv("PATH")
 	result := runDoctorFromDirWithEnv(t, t.TempDir(), []string{"PATH=" + path})
 	if result.err != nil {
 		t.Fatalf("isobox doctor should exit 0 with only warning findings: %v\n%s", result.err, result.combined)
@@ -183,8 +203,15 @@ func TestDoctorReportsDuplicateIsoboxAsWarning(t *testing.T) {
 func TestDoctorReportsVersionMetadataAsOKForDevBuild(t *testing.T) {
 	// The doctor binary built by the test harness uses the default
 	// "dev" version; a `dev` version must be reported as ok, not as a
-	// warning or update-eligibility error.
-	result := runDoctorFromDir(t, t.TempDir())
+	// warning or update-eligibility error. The test puts a fake
+	// bwrap on PATH so the missing-bwrap warning does not drown out
+	// the version finding.
+	binPath := buildIsobox(t)
+	binDir := filepath.Dir(binPath)
+	fakeBwrap := writeFakeExecutable(t, "bwrap")
+	path := filepath.Dir(fakeBwrap) + string(os.PathListSeparator) + binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+
+	result := runDoctorFromDirWithEnv(t, t.TempDir(), []string{"PATH=" + path})
 	if result.err != nil {
 		t.Fatalf("isobox doctor failed: %v\n%s", result.err, result.combined)
 	}
@@ -235,6 +262,22 @@ func buildIsolatedPath(t *testing.T, keep ...string) string {
 		}
 	}
 	return isolated
+}
+
+// writeFakeExecutable creates an empty file with the given name in a
+// temp directory and returns the file's absolute path. The file has
+// the execute bit set so exec.LookPath will resolve it on PATH. The
+// doctor global checks call LookPath only to test for presence; the
+// fake binary is never executed.
+func writeFakeExecutable(t *testing.T, name string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake %s: %v", name, err)
+	}
+	return path
 }
 
 // extendPath returns a PATH that includes the host PATH plus an extra

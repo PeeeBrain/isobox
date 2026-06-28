@@ -226,30 +226,23 @@ func TestUpdateCheckWarnsAboutDuplicateIsoboxOnPath(t *testing.T) {
 
 // TestUpdateCheckRefusesPackageManagedUpdateTarget exercises the
 // managed-path refusal end-to-end. The full allow/deny matrix for
-// every managed prefix is covered by the unit suite in
-// internal/update/target_test.go; this integration test only
-// confirms the CLI wire-up by pointing PATH at a fake isobox
-// binary placed under a known managed prefix.
-//
-// The test places a symlink under /opt, which is a known managed
-// prefix in production code. On systems where /opt is read-only
-// without elevated privileges the test is skipped; the unit tests
-// already cover the matrix and the CLI wire-up is a single line
-// (`update.CheckManagedTarget(target.Path)`).
+// every default managed prefix is covered by the unit suite in
+// internal/update/target_test.go; this integration test confirms
+// the CLI wire-up by placing the active isobox binary in a temp
+// directory and teaching the updater about that directory via
+// ISOBOX_UPDATE_MANAGED_PATH_PREFIXES. The test does not need
+// write access to /opt, /usr/bin, or any other system-managed
+// location.
 func TestUpdateCheckRefusesPackageManagedUpdateTarget(t *testing.T) {
 	binPath := buildIsoboxWithVersion(t, "v0.1.0")
-
-	target := "/opt/isobox-update-test-" + filepath.Base(t.TempDir())
-	if err := os.Symlink(binPath, target); err != nil {
-		t.Skipf("test requires symlink under /opt: %v", err)
-	}
-	defer os.Remove(target)
+	binDir := filepath.Dir(binPath)
 
 	client := writeFakeUpdateClient(t, []fakeClientRelease{
 		{TagName: "v0.1.0"},
 	})
 	result := runUpdateWithBinaryEnv(t, t.TempDir(), binPath, client, []string{
-		"PATH=" + filepath.Dir(target) + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH=" + extendPathFor(t, binDir),
+		"ISOBOX_UPDATE_MANAGED_PATH_PREFIXES=" + binDir + string(filepath.Separator),
 	})
 	if result.err == nil {
 		t.Fatalf("isobox update --check unexpectedly succeeded with a managed target:\n%s", result.combined)

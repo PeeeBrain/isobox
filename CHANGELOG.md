@@ -42,6 +42,10 @@ under `Unreleased` until a human-approved release is created.
   `dev` builds and clearly package-manager-managed Update Targets
   before doing any I/O. The release metadata source is an injectable
   client so the integration tests do not depend on live GitHub.
+  Power users with unusual system-managed install locations can
+  teach the updater about additional managed prefixes by exporting
+  `ISOBOX_UPDATE_MANAGED_PATH_PREFIXES` (one path per line) before
+  running the check.
 
 ## Release process
 
