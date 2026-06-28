@@ -344,6 +344,28 @@ go test ./...
 The tests exercise the CLI through its public interface using temporary Git
 repositories.
 
+## Run A Diagnostic
+
+`isobox doctor [path]` runs read-only Doctor Checks and reports Doctor
+Findings with severities `ok`, `warning`, or `error`. The command is the
+recommended first step on a fresh install: it confirms the isobox binary is
+on `PATH`, surfaces obvious setup problems, and exits with status 1 only when
+a finding has severity `error` so warnings do not break normal development.
+
+```sh
+isobox doctor
+isobox doctor /path/to/repository
+```
+
+The first 0.1.1 slice reports isobox version metadata as an `ok` finding and
+reserves a `Project checks` section for project-scoped checks that will land
+in follow-up slices. The grouped output is human-readable and stable so
+scripts can grep it. `isobox doctor` never creates or modifies host or
+project state.
+
+Run `isobox --help` for the full command list and `isobox <command> --help`
+for per-command usage and examples.
+
 ## Current Limitations
 
 - The host Runtime Backend does **not** provide strong isolation. The bubblewrap Runtime Backend provides filesystem containment but does not provide strong resource or network isolation.

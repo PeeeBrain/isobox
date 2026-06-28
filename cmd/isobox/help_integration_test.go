@@ -7,32 +7,6 @@ import (
 	"testing"
 )
 
-// helpTextFor runs `isobox <args...>` and returns the combined stdout/stderr
-// text. Integration tests for the help surface exec the built binary so the
-// assertions cover the externally visible CLI shape.
-func helpTextFor(t *testing.T, args ...string) string {
-	t.Helper()
-
-	binPath := filepath.Join(t.TempDir(), "isobox")
-	build := exec.Command("go", "build", "-o", binPath, ".")
-	build.Dir = filepath.Join("..", "..", "cmd", "isobox")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build isobox: %v\n%s", err, out)
-	}
-
-	cmd := exec.Command(binPath, args...)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		// A usage error is expected for unknown commands; the assertion
-		// should still hold on the printed text. Non-zero exits do not
-		// affect the combined output capture here.
-		_ = err
-	}
-	return stdout.String() + stderr.String()
-}
-
 // buildIsobox compiles the isobox binary into a temp directory and returns
 // its path. Help integration tests share this helper so the build cost is
 // paid once per test rather than once per subtest.
