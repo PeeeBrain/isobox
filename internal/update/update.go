@@ -31,6 +31,13 @@ type Release struct {
 	Prerelease  bool      `json:"prerelease"`
 	Draft       bool      `json:"draft"`
 	PublishedAt time.Time `json:"published_at"`
+	Assets      []Asset   `json:"assets"`
+}
+
+// Asset is a downloadable file attached to a GitHub Release.
+type Asset struct {
+	Name string `json:"name"`
+	URL  string `json:"browser_download_url"`
 }
 
 // ReleaseClient is the dependency boundary between the update package
