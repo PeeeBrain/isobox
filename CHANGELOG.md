@@ -7,6 +7,10 @@ under `Unreleased` until a human-approved release is created.
 
 ## Unreleased
 
+No unreleased changes.
+
+## v0.1.1 - 2026-06-28
+
 ### Added
 
 - GitHub Release build pipeline for Linux `amd64` and `arm64` binaries.
